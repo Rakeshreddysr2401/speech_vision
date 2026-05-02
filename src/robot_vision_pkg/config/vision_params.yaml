@@ -9,7 +9,7 @@ camera_node:
 detector_node:
   ros__parameters:
     model_name: "yolo11n.pt"        # ultralytics model name
-    confidence_threshold: 0.5
+    confidence_threshold: 0.7
     iou_threshold: 0.45
     input_size: 640
     device: "cuda:0"
@@ -43,8 +43,8 @@ moondream_node:
   ros__parameters:
     model_id: "vikhyatk/moondream2"
     revision: "2025-01-09"
-    device: "cuda"
-    max_new_tokens: 256
+    device: "cpu
+    max_new_tokens: 64
     use_detection_context: true     # enrich VLM queries with detection/distance data
 
 scene_node:
