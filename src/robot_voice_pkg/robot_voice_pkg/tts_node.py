@@ -9,6 +9,7 @@ class TTSNode(Node):
         super().__init__("tts_node")
 
         self.declare_parameter("engine", "kokoro")
+        self.declare_parameter("output_device_index", 0)
 
         # Kokoro params
         self.declare_parameter("kokoro.model", "af_heart")
@@ -25,6 +26,7 @@ class TTSNode(Node):
         self.declare_parameter("piper.piper_bin", "piper")
 
         self._engine_name = self.get_parameter("engine").value
+        self._output_device_index = self.get_parameter("output_device_index").value
         self._backend = self._load_backend(self._engine_name)
 
         self._lock = threading.Lock()
@@ -50,6 +52,7 @@ class TTSNode(Node):
                 "device":      self.get_parameter("kokoro.device").value,
                 "sample_rate": self.get_parameter("kokoro.sample_rate").value,
                 "lang":        self.get_parameter("kokoro.lang").value,
+                "device_index": self._output_device_index,
             }
             return KokoroBackend(params)
         elif engine == "piper":
@@ -60,6 +63,7 @@ class TTSNode(Node):
                 "speed":       self.get_parameter("piper.speed").value,
                 "sample_rate": self.get_parameter("piper.sample_rate").value,
                 "piper_bin":   self.get_parameter("piper.piper_bin").value,
+                "device_index": self._output_device_index,
             }
             return PiperBackend(params)
         else:
@@ -68,6 +72,7 @@ class TTSNode(Node):
     def _on_speech(self, msg: String):
         text = msg.data.strip()
         if text:
+            self.get_logger().info(f"Received speech request: {text}")
             with self._lock:
                 self._queue.append(text)
             self._event.set()

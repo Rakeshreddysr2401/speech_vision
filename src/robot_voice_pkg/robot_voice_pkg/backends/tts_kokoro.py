@@ -11,6 +11,7 @@ class KokoroBackend:
         self._speed = float(params.get("speed", 1.0))
         self._voice = str(params.get("model", "af_heart"))
         self._sample_rate = int(params.get("sample_rate", 24000))
+        self._device_index = params.get("device_index")
         lang = str(params.get("lang", "a"))  # 'a' = American English
         self._pipeline = KPipeline(lang_code=lang)
 
@@ -32,4 +33,4 @@ class KokoroBackend:
         audio = self.synthesize(text)
         if audio.size > 0:
             # sd.play(audio, samplerate=self._sample_rate, blocking=True)
-            sd.play( audio, samplerate=self._sample_rate, device=2, blocking=True )
+            sd.play( audio, samplerate=self._sample_rate, device=self._device_index, blocking=True )

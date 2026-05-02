@@ -15,6 +15,7 @@ class PiperBackend:
         self._speed = float(params.get("speed", 1.0))
         self._sample_rate = int(params.get("sample_rate", 22050))
         self._piper_bin = str(params.get("piper_bin", "piper"))
+        self._device_index = params.get("device_index")
 
         if not os.path.exists(self._model_path):
             raise FileNotFoundError(f"Piper model not found: {self._model_path}")
@@ -49,4 +50,4 @@ class PiperBackend:
         audio = self.synthesize(text)
         if audio.size > 0:
             # sd.play(audio, samplerate=self._sample_rate, blocking=True)
-            sd.play( audio, samplerate=self._sample_rate, device=2, blocking=True )
+            sd.play( audio, samplerate=self._sample_rate, device=self._device_index, blocking=True )
