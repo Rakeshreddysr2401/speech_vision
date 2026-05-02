@@ -1,0 +1,54 @@
+camera_node:
+  ros__parameters:
+    device_id: 0
+    width: 640
+    height: 480
+    fps: 30
+    camera_type: "usb"              # "usb" (V4L2) or "csi" (Jetson MIPI via GStreamer)
+
+detector_node:
+  ros__parameters:
+    model_name: "yolo11n.pt"        # ultralytics model name
+    confidence_threshold: 0.5
+    iou_threshold: 0.45
+    input_size: 640
+    device: "cuda:0"
+    engine_cache_dir: "/models/engines"
+    classes_filter: []              # empty = all 80 COCO classes; e.g. [0, 2, 7] = person, car, truck
+
+depth_node:
+  ros__parameters:
+    model_size: "Small"             # Small (~100MB GPU) or Base (~200MB)
+    input_size: 518
+    publish_rate_hz: 10.0           # depth at 10 FPS (lighter than detection)
+    device: "cuda"
+    max_depth_m: 10.0               # scale relative depth to this max range
+
+tracker_node:
+  ros__parameters:
+    max_age: 30                     # frames before losing a track
+    min_hits: 3                     # detections before confirming a track
+    iou_threshold: 0.3              # IoU match threshold
+
+spatial_node:
+  ros__parameters:
+    camera_fov_h_deg: 60.0          # Logitech webcam horizontal FOV estimate
+    camera_fov_v_deg: 45.0
+    depth_patch_size: 10            # pixels around center to sample median depth
+    use_tracks: true                # true = subscribe /vision/tracks, false = /vision/detections
+    image_width: 640
+    image_height: 480
+
+moondream_node:
+  ros__parameters:
+    model_id: "vikhyatk/moondream2"
+    revision: "2025-01-09"
+    device: "cuda"
+    max_new_tokens: 256
+    use_detection_context: true     # enrich VLM queries with detection/distance data
+
+scene_node:
+  ros__parameters:
+    interval_sec: 10.0
+    prompt: "Describe what you see in one sentence, including any people, vehicles, or obstacles."
+    include_detections: true        # prepend detection context to prompts
