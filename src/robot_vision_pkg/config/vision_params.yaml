@@ -14,7 +14,7 @@ detector_node:
     input_size: 640
     device: "cuda:0"
     engine_cache_dir: "/models/engines"
-    classes_filter: []              # empty = all 80 COCO classes; e.g. [0, 2, 7] = person, car, truck
+    # classes_filter: []              # empty = all 80 COCO classes; e.g. [0, 2, 7] = person, car, truck
 
 depth_node:
   ros__parameters:
@@ -43,7 +43,7 @@ moondream_node:
   ros__parameters:
     model_id: "vikhyatk/moondream2"
     revision: "2025-01-09"
-    device: "cpu
+    device: "cpu"
     max_new_tokens: 64
     use_detection_context: true     # enrich VLM queries with detection/distance data
 

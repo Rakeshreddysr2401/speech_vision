@@ -38,6 +38,7 @@ class STTNode(Node):
         self._muted = False  # True while TTS is speaking
 
         self._pub_input    = self.create_publisher(String, "/voice/user_input", 10)
+        self._pub_echo     = self.create_publisher(String, "/voice/robot_speech", 10)
         self._pub_listening = self.create_publisher(Bool, "/voice/stt_listening", 1)
         self.create_subscription(Bool, "/voice/tts_speaking", self._on_tts_speaking, 1)
 
@@ -117,6 +118,7 @@ class STTNode(Node):
         if text:
             self.get_logger().info(f"STT: {text}")
             self._pub_input.publish(String(data=text))
+            self._pub_echo.publish(String(data=text))
 
 
 def main(args=None):
