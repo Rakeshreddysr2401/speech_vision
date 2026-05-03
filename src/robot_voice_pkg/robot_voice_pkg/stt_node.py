@@ -38,6 +38,7 @@ class STTNode(Node):
         self._muted = False  # True while TTS is speaking
 
         self._pub_input    = self.create_publisher(String, "/voice/user_input", 10)
+        self._pub_vlm      = self.create_publisher(String, "/vision/query", 10)
         self._pub_listening = self.create_publisher(Bool, "/voice/stt_listening", 1)
         self.create_subscription(Bool, "/voice/tts_speaking", self._on_tts_speaking, 1)
 
@@ -50,13 +51,6 @@ class STTNode(Node):
 
     def _mic_loop(self):
         pa = pyaudio.PyAudio()
-        # stream = pa.open(
-        #     format=pyaudio.paInt16,
-        #     channels=1,
-        #     rate=self._rate,
-        #     input=True,
-        #     frames_per_buffer=self._vad.frame_bytes // 2,
-        # )
         self.get_logger().info(f"Opening mic device {self._device_index if self._device_index != -1 else 'DEFAULT'}")
         
         try:
@@ -117,7 +111,7 @@ class STTNode(Node):
         if text:
             self.get_logger().info(f"STT: {text}")
             self._pub_input.publish(String(data=text))
-            self._pub_echo.publish(String(data=text))
+            self._pub_vlm.publish(String(data=text))
 
 
 def main(args=None):
