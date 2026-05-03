@@ -11,7 +11,7 @@ def generate_launch_description():
     pkg = get_package_share_directory("robot_brain_pkg")
     config = os.path.join(pkg, "config", "brain_params.yaml")
 
-    provider = LaunchConfiguration("provider", default="ollama")
+    provider = LaunchConfiguration("provider", default="openai")
     use_vision = LaunchConfiguration("use_vision", default="false")
 
     return LaunchDescription([

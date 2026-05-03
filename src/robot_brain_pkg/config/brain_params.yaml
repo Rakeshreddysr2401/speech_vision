@@ -1,7 +1,7 @@
 brain_node:
   ros__parameters:
     # ── Switch provider by changing this one line ──────────────────
-    provider: "ollama"          # openai | llamacpp | gemini | ollama
+    provider: "openai"          # openai | llamacpp | gemini | ollama
 
     use_vision: false           # true = attach latest /vision/image_raw to every query
     history_turns: 6            # conversation memory (user+assistant pairs kept)
