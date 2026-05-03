@@ -1,9 +1,9 @@
 brain_node:
   ros__parameters:
     # ── Switch provider by changing this one line ──────────────────
-    provider: "openai"          # openai | llamacpp | gemini | ollama
+    provider: "llamacpp"          # openai | llamacpp | gemini | ollama
 
-    use_vision: false           # true = attach latest /vision/image_raw to every query
+    use_vision: true           # true = attach latest /vision/image_raw to every query
     history_turns: 6            # conversation memory (user+assistant pairs kept)
     system_prompt: "You are a helpful robot assistant. Keep answers short and clear."
 
@@ -19,8 +19,8 @@ brain_node:
     # Start server: llama-server --model gemma4.gguf [--mmproj mmproj.gguf] --port 8080
     # For VLM: set use_vision: true and load a model with --mmproj
     llamacpp:
-      model: "gemma4"                 # must match model name in llama-server
-      base_url: "http://localhost:8080/v1"
+      model: "gemma-4-E4B-it-Q8_0.gguf"                 # must match model name in llama-server
+      base_url: "http://192.168.31.24:8080/v1"  # llama-server endpoint
       temperature: 0.7
       max_tokens: 150
 

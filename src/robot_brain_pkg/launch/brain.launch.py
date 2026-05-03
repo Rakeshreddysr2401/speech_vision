@@ -11,13 +11,13 @@ def generate_launch_description():
     pkg = get_package_share_directory("robot_brain_pkg")
     config = os.path.join(pkg, "config", "brain_params.yaml")
 
-    provider = LaunchConfiguration("provider", default="openai")
+    provider = LaunchConfiguration("provider", default="llamacpp")
     use_vision = LaunchConfiguration("use_vision", default="false")
 
     return LaunchDescription([
         DeclareLaunchArgument(
             "provider",
-            default_value="ollama",
+            default_value="llamacpp",
             description="LLM provider: openai | llamacpp | gemini | ollama",
         ),
         DeclareLaunchArgument(

@@ -106,7 +106,7 @@ class STTNode(Node):
 
     def _transcribe(self, pcm: bytes):
         audio = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
-        segments, _ = self._model.transcribe(audio, language=self._lang, beam_size=5)
+        segments, _ = self._model.transcribe(audio, language=self._lang, beam_size=1)
         text = " ".join(s.text.strip() for s in segments).strip()
         if text:
             self.get_logger().info(f"STT: {text}")
