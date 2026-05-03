@@ -52,6 +52,7 @@ class MoondreamNode(Node):
         self.create_subscription(Image, "/vision/image_raw", self._on_image, 1)
         self.create_subscription(String, "/vision/query", self._on_query, 10)
         self._pub_result = self.create_publisher(String, "/vision/query_result", 10)
+        self._pub_voice = self.create_publisher(String, "/voice/robot_speech", 10)
 
         if self._use_context:
             self.create_subscription(
@@ -114,6 +115,7 @@ class MoondreamNode(Node):
             answer = self._model.answer_question(enc, enriched_query)
         self.get_logger().info(f"VLM Q: {query!r}  A: {answer!r}")
         self._pub_result.publish(String(data=answer))
+        self._pub_voice.publish(String(data=answer))
 
 
 def main(args=None):
