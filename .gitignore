@@ -25,3 +25,9 @@ coverage.xml
 *.swo
 *~
 .DS_Store
+# AI / ML model files
+*.pt
+*.onnx
+*.engine
+*.trt
+*.bin
