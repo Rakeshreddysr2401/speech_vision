@@ -1,0 +1,39 @@
+brain_node:
+  ros__parameters:
+    # ── Switch provider by changing this one line ──────────────────
+    provider: "ollama"          # openai | llamacpp | gemini | ollama
+
+    use_vision: false           # true = attach latest /vision/image_raw to every query
+    history_turns: 6            # conversation memory (user+assistant pairs kept)
+    system_prompt: "You are a helpful robot assistant. Keep answers short and clear."
+
+    # ── OpenAI (GPT-4o, GPT-4o-mini …) ────────────────────────────
+    openai:
+      api_key_env: "OPENAI_API_KEY"   # env var that holds your key
+      model: "gpt-4o-mini"
+      base_url: ""                    # empty = OpenAI default endpoint
+      temperature: 0.7
+      max_tokens: 150
+
+    # ── llama.cpp local server (Gemma4, Llama3, any GGUF model) ────
+    # Start server: llama-server --model gemma4.gguf [--mmproj mmproj.gguf] --port 8080
+    # For VLM: set use_vision: true and load a model with --mmproj
+    llamacpp:
+      model: "gemma4"                 # must match model name in llama-server
+      base_url: "http://localhost:8080/v1"
+      temperature: 0.7
+      max_tokens: 150
+
+    # ── Google Gemini ───────────────────────────────────────────────
+    gemini:
+      api_key_env: "GEMINI_API_KEY"
+      model: "gemini-2.0-flash"       # or gemini-1.5-pro, gemini-2.0-flash-lite …
+      temperature: 0.7
+      max_tokens: 150
+
+    # ── Ollama local (llama3.2, mistral, llava for VLM …) ──────────
+    ollama:
+      base_url: "http://localhost:11434"
+      model: "llama3.2"               # swap to "llava" or "moondream" for VLM + use_vision: true
+      temperature: 0.7
+      max_tokens: 150
