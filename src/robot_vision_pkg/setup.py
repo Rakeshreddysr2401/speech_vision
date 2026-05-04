@@ -12,6 +12,7 @@ setup(
         (f"share/{package_name}", ["package.xml"]),
         (f"share/{package_name}/config", glob("config/*.yaml")),
         (f"share/{package_name}/launch", glob("launch/*.py")),
+        (f"share/{package_name}/models", glob("models/*.pt") + glob("models/*.onnx")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,

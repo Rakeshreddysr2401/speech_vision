@@ -12,12 +12,12 @@ def generate_launch_description():
     config = os.path.join(pkg, "config", "vision_params.yaml")
 
     return LaunchDescription([
-        DeclareLaunchArgument("enable_detector", default_value="true"),
-        DeclareLaunchArgument("enable_depth", default_value="true"),
-        DeclareLaunchArgument("enable_tracker", default_value="true"),
-        DeclareLaunchArgument("enable_spatial", default_value="true"),
-        DeclareLaunchArgument("enable_moondream", default_value="true"),
-        DeclareLaunchArgument("enable_scene", default_value="true"),
+        DeclareLaunchArgument("enable_detector",  default_value="true"),
+        DeclareLaunchArgument("enable_depth",     default_value="false"),
+        DeclareLaunchArgument("enable_tracker",   default_value="false"),
+        DeclareLaunchArgument("enable_spatial",   default_value="false"),
+        DeclareLaunchArgument("enable_moondream", default_value="false"),
+        DeclareLaunchArgument("enable_scene",     default_value="false"),
 
         # ── Camera (always on) ───────────────────────────────────────────
         Node(

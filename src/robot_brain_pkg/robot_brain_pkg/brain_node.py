@@ -1,3 +1,4 @@
+import queue
 import threading
 
 import rclpy
@@ -51,7 +52,8 @@ class BrainNode(Node):
         self._history: list[dict] = []
         self._latest_frame: bytes | None = None
         self._lock = threading.Lock()
-        self._busy = False
+        self._queue: queue.Queue = queue.Queue(maxsize=3)
+        threading.Thread(target=self._worker_loop, daemon=True).start()
 
         # ── Publishers ───────────────────────────────────────────────
         self._pub_speech = self.create_publisher(String, "/voice/robot_speech", 10)
@@ -138,14 +140,24 @@ class BrainNode(Node):
         text = msg.data.strip()
         if not text:
             return
-        if self._busy:
-            self.get_logger().warning("Brain busy — dropping input while processing")
-            return
-        threading.Thread(target=self._process, args=(text,), daemon=True).start()
+        try:
+            self._queue.put_nowait(text)
+        except queue.Full:
+            try:
+                self._queue.get_nowait()
+            except queue.Empty:
+                pass
+            self._queue.put_nowait(text)
+            self.get_logger().warning("Input queue full — dropped oldest item")
+
+    def _worker_loop(self) -> None:
+        while True:
+            text = self._queue.get()
+            self._process(text)
+            self._queue.task_done()
 
     # ── Inference ─────────────────────────────────────────────────────
     def _process(self, text: str) -> None:
-        self._busy = True
         self._pub_thinking.publish(Bool(data=True))
         try:
             with self._lock:
@@ -173,7 +185,6 @@ class BrainNode(Node):
         except Exception as e:
             self.get_logger().error(f"Brain inference error: {e}")
         finally:
-            self._busy = False
             self._pub_thinking.publish(Bool(data=False))
 
 

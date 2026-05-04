@@ -51,11 +51,12 @@ class DetectorNode(Node):
         self._bridge = CvBridge()
         self._lock = threading.Lock()
 
-        self.get_logger().info(f"Loading YOLO model: {model_name}")
+        model_path = self._resolve_model(model_name)
+        self.get_logger().info(f"Loading YOLO model: {model_path}")
 
         from ultralytics import YOLO
 
-        self._model = YOLO(model_name)
+        self._model = YOLO(model_path)
 
         self.get_logger().info(
             f"YOLO model loaded with CUDA backend ({self._device})"
@@ -81,6 +82,16 @@ class DetectorNode(Node):
         )
 
         self.get_logger().info("Detector node ready")
+
+    def _resolve_model(self, model_name: str) -> str:
+        import os
+        if os.path.isabs(model_name):
+            return model_name
+        from ament_index_python.packages import get_package_share_directory
+        candidate = os.path.join(
+            get_package_share_directory("robot_vision_pkg"), "models", model_name
+        )
+        return candidate if os.path.exists(candidate) else model_name
 
     def _on_image(self, msg: Image):
         if not self._lock.acquire(blocking=False):
