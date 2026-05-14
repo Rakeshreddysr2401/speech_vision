@@ -16,17 +16,30 @@
 #
 # Providers (brain backend):
 #   gemini   ollama   openai   llamacpp
-set -euo pipefail
+set -e
+set +u
 
 MODE=${1:-visual_assistant}
 PROVIDER=${2:-gemini}
-WS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Get the directory where the script is located (src/)
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The workspace root is one level up from src/
+WS_ROOT="$(dirname "$SRC_DIR")"
 
 echo "Robot starting — mode: $MODE  provider: $PROVIDER"
+echo "Workspace root: $WS_ROOT"
 
 # shellcheck disable=SC1091
 source /opt/ros/humble/setup.bash
-source "$WS/install/setup.bash"
+
+if [ -f "$WS_ROOT/install/setup.bash" ]; then
+    source "$WS_ROOT/install/setup.bash"
+else
+    echo "Error: Could not find $WS_ROOT/install/setup.bash"
+    echo "Please run 'colcon build' in $WS_ROOT first."
+    exit 1
+fi
 
 exec ros2 launch robot_bringup_pkg robot.launch.py \
     mode:="$MODE" \

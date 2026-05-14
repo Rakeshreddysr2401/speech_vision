@@ -20,7 +20,7 @@ brain_node:
     # For VLM: set use_vision: true and load a model with --mmproj
     llamacpp:
       model: "gemma-4-E4B-it-Q8_0.gguf"                 # must match model name in llama-server
-      base_url: "http://192.168.31.24:8080/v1"  # llama-server endpoint
+      base_url: "http://singireddys-Mac-mini.local:8080/v1"  # llama-server endpoint
       temperature: 0.7
       max_tokens: 150
 
