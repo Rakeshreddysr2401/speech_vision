@@ -37,7 +37,9 @@ def launch_setup(context, *args, **kwargs):
         )
 
     def vision_minimal():
-        # Camera + detector only — no depth/tracking/moondream (saves ~4 GB VRAM)
+        # Camera + detector + depth + spatial + moondream — required for Pi5 integration.
+        # depth_node provides /vision/depth for spatial_node to produce /vision/objects_3d.
+        # moondream_node answers /vision/query → /vision/query_result for Pi5 VLM queries.
         return _vision_launch(
             vision_launch,
             enable_detector="true",
