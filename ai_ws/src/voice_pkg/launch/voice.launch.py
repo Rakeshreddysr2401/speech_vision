@@ -1,0 +1,34 @@
+from launch import LaunchDescription
+from launch_ros.actions import Node
+from ament_index_python.packages import get_package_share_directory
+import os
+
+
+def generate_launch_description():
+    config = os.path.join(
+        get_package_share_directory('voice_pkg'), 'config', 'voice_params.yaml'
+    )
+
+    return LaunchDescription([
+        Node(
+            package='voice_pkg',
+            executable='wakeword_node',
+            name='wakeword_node',
+            parameters=[config],
+            output='screen',
+        ),
+        Node(
+            package='voice_pkg',
+            executable='stt_node',
+            name='stt_node',
+            parameters=[config],
+            output='screen',
+        ),
+        Node(
+            package='voice_pkg',
+            executable='tts_node',
+            name='tts_node',
+            parameters=[config],
+            output='screen',
+        ),
+    ])

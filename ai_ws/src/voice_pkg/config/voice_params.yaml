@@ -1,0 +1,23 @@
+voice_pkg:
+  wakeword_node:
+    ros__parameters:
+      wake_word: "hey_jarvis"
+      threshold: 0.5          # confidence threshold 0.0-1.0
+      chunk_size: 1280        # audio chunk size (80ms at 16kHz)
+
+  stt_node:
+    ros__parameters:
+      model: "small"          # whisper model: tiny/base/small/medium
+      language: "en"
+      device: "cuda"
+      compute_type: "float16"
+      beam_size: 5
+      vad_filter: true        # filter non-speech via built-in VAD
+      silence_timeout: 1.5    # seconds of silence before finalising transcription
+
+  tts_node:
+    ros__parameters:
+      voice: "af_heart"       # kokoro voice model
+      speed: 1.0
+      device: "cuda"
+      sample_rate: 22050

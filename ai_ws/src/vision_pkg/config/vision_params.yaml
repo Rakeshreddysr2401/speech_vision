@@ -1,0 +1,14 @@
+vision_pkg:
+  detector_node:
+    ros__parameters:
+      model: "yolov8n.pt"       # nano model — fastest on Jetson; swap to yolov8s for more accuracy
+      confidence: 0.5
+      device: "cuda"
+      image_topic: "/camera/color/image_raw"
+
+  moondream_node:
+    ros__parameters:
+      model: "vikhyatk/moondream2"
+      revision: "2025-01-09"
+      backend: "nano_llm"       # NanoLLM MLC INT4 — do NOT use huggingface
+      image_topic: "/camera/color/image_raw"

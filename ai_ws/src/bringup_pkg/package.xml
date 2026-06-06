@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>bringup_pkg</name>
+  <version>0.1.0</version>
+  <description>Top-level launch files for the robot AI stack (Container 2)</description>
+  <maintainer email="rakhi24@robot.local">rakhi24</maintainer>
+  <license>MIT</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>voice_pkg</exec_depend>
+  <exec_depend>vision_pkg</exec_depend>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+</package>
