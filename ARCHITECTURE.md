@@ -7,7 +7,7 @@
 | Jetson Orin Nano 8GB | Vision, SLAM, Nav2, STT, TTS — pure perception |
 | RealSense D555 (PoE) | Depth + RGB + IMU — publishes SafeDDS ROS2 topics natively |
 | Raspberry Pi 5 8GB | LangGraph brain, ROS2↔LangGraph bridge, micro-ROS agent |
-| Mac Mini 16GB | Ollama (Llava, Gemma, Qwen) — LLM and VLM inference |
+| Mac Mini 16GB | llama.cpp server — LLM + complex VLM queries (Llava) over HTTP |
 | ESP32 | Motor controller (4 wheels, micro-ROS over WiFi) |
 
 ## Network Topology
@@ -32,7 +32,8 @@ D555 static IP: 192.168.1.100 (set via router DHCP reservation)
 isaac_ros_visual_slam     ← SLAM (NITROS zero-copy GPU)
 isaac_ros_image_pipeline  ← accelerated image processing
 isaac_ros_nvblox          ← 3D voxel map for Nav2
-isaac_ros_nav2            ← GPU path planning, accepts /goal_pose directly from Pi5
+nav2-bringup + nvblox_nav2 ← standard Nav2 stack + nvblox costmap plugin (ships with nvblox)
+isaac_ros_yolov8          ← object detection (NITROS zero-copy, no image copy between containers)
 ```
 No custom nodes needed — Pi5 publishes /goal_pose directly to Nav2 over ROS2.
 
@@ -42,7 +43,7 @@ Base: ros:jazzy-ros-base + pytorch + faster-whisper + kokoro + openwakeword + ml
 
 ~/robot/ai_ws/src/
 ├── voice_pkg/
-│   ├── wakeword_node    ← always-on CPU, openWakeWord "hey jarvis"
+│   ├── wakeword_node    ← always-on CPU, openWakeWord "hey_jarvis"
 │   │                       publishes: /voice/wake_detected (Bool)
 │   ├── stt_node         ← triggered by /voice/wake_detected
 │   │                       Whisper small on GPU
@@ -52,9 +53,6 @@ Base: ros:jazzy-ros-base + pytorch + faster-whisper + kokoro + openwakeword + ml
 │                           publishes:  /voice/tts_speaking (Bool) → mutes stt_node
 │
 ├── vision_pkg/
-│   ├── detector_node    ← YOLOv8 on GPU
-│   │                       subscribes: /camera/color/image_raw
-│   │                       publishes:  /vision/detections (Detection2DArray)
 │   └── moondream_node   ← NanoLLM MLC INT4 (~0.8GB VRAM)
 │                           subscribes: /vision/query (String)
 │                           publishes:  /vision/query_result (String)
@@ -63,6 +61,7 @@ Base: ros:jazzy-ros-base + pytorch + faster-whisper + kokoro + openwakeword + ml
 │
 └── bringup_pkg/         ← launch files for all modes
 ```
+YOLOv8 moved to Container 1 (isaac_ros_yolov8) — runs NITROS zero-copy in the same GPU pipeline as visual_slam.
 
 Both containers: `network_mode: host` → ROS2 topics flow freely.
 NITROS zero-copy applies inside Container 1 only.
@@ -73,7 +72,8 @@ One workspace: `ai_ws` → Container 2. Container 1 uses Isaac ROS packages only
 ```
 D555 (SafeDDS/ethernet)
   → /camera/depth/image_rect_raw  → Container 1: isaac_ros_visual_slam (SLAM)
-  → /camera/color/image_raw       → Container 2: detector_node, moondream_node
+  → /camera/color/image_raw       → Container 1: isaac_ros_yolov8 (NITROS)
+                                  → Container 2: moondream_node (on-demand queries only)
   → /camera/imu                   → Container 1: isaac_ros_visual_slam
 
 USB mic → wakeword_node (CPU)
@@ -81,10 +81,10 @@ USB mic → wakeword_node (CPU)
   → stt_node (Whisper small GPU)
   → /voice/user_input
   → Pi5 LangGraph (subscribes over network)
-      → Mac Mini Lamma Cpp HTTP (LLM/VLM reasoning)
+      → Mac Mini llama.cpp HTTP (LLM + complex VLM: Llava)
       → /voice/robot_speech      → tts_node → Kokoro → USB speaker
-      → /vision/query            → moondream_node → /vision/query_result → Pi5
-      → /goal_pose               → nav_goal_node → Nav2
+      → /vision/query            → moondream_node (fast/repeated lookups) → /vision/query_result → Pi5
+      → /goal_pose               → Nav2 directly
 
 Nav2 → /cmd_vel → microros_agent → WiFi → ESP32 → wheels
 ```
@@ -94,10 +94,10 @@ Nav2 → /cmd_vel → microros_agent → WiFi → ESP32 → wheels
 | Topic | Type | From → To |
 |---|---|---|
 | `/camera/depth/image_rect_raw` | Image | D555 → visual_slam (NITROS) |
-| `/camera/color/image_raw` | Image | D555 → detector_node, moondream_node |
+| `/camera/color/image_raw` | Image | D555 → isaac_ros_yolov8 (Container 1), moondream_node (Container 2, on-demand) |
 | `/camera/imu` | Imu | D555 → visual_slam |
 | `/visual_slam/tracking/odometry` | Odometry | Isaac ROS → Nav2, Pi5 |
-| `/vision/detections` | Detection2DArray | detector_node → Pi5 (object awareness) |
+| `/vision/detections` | Detection2DArray | isaac_ros_yolov8 (Container 1) → Pi5 (object awareness) |
 | `/vision/query` | String | Pi5 → moondream_node |
 | `/vision/query_result` | String | moondream_node → Pi5 |
 | `/voice/wake_detected` | Bool | wakeword_node → stt_node |
@@ -123,7 +123,7 @@ Nav2 → /cmd_vel → microros_agent → WiFi → ESP32 → wheels
 | 1 | `isaac_ros_visual_slam` | VIO SLAM using D555 depth + IMU |
 | 1 | `isaac_ros_image_pipeline` | Accelerated image processing |
 | 2 | `isaac_ros_nvblox` | 3D voxel map for Nav2 costmap |
-| 2 | `isaac_ros_nav2` | GPU path planning |
+| 2 | `nav2-bringup` + `nvblox_nav2` | Standard Nav2 stack + nvblox costmap plugin |
 
 ## AI Stack
 
@@ -132,22 +132,24 @@ Nav2 → /cmd_vel → microros_agent → WiFi → ESP32 → wheels
 | Wake word | openWakeWord "hey jarvis" | ~0 (CPU) | Always on, pre-trained |
 | STT | faster-whisper small | ~0.6 GB | ~1s latency, good accuracy |
 | TTS | Kokoro | ~0.4 GB | GPU-accelerated, natural voice |
-| Detector | YOLOv8 | ~0.5 GB | 80 COCO classes |
+| Detector | YOLOv8 (isaac_ros_yolov8, Container 1) | ~0.5 GB | 80 COCO classes, NITROS zero-copy |
 | VLM | Moondream2 NanoLLM MLC INT4 | ~0.8 GB | Frequent visual queries |
-| LLM | Mac Mini Ollama | 0 on Jetson | All conversation/reasoning offloaded |
+| LLM + complex VLM | Mac Mini llama.cpp (Llava) | 0 on Jetson | Conversation, reasoning, rich scene description |
+| Fast VLM | Moondream2 NanoLLM MLC INT4 (Jetson) | ~0.8 GB | Frequent nav lookups: distance checks, object tracking, repeated queries |
 
 ## Memory Budget (8GB Unified)
 
 | Workload | VRAM/RAM |
 |---|---|
-| Isaac ROS SLAM + Nav2 + nvblox | ~1.5 GB |
-| YOLO detector | ~0.5 GB |
+| Isaac ROS SLAM + Nav2 + nvblox + YOLOv8 | ~2.0 GB |
 | Whisper small | ~0.6 GB |
 | Kokoro TTS | ~0.4 GB |
 | Moondream2 MLC INT4 | ~0.8 GB |
 | Ubuntu 24.04 OS + overhead | ~1.0 GB |
 | **Total** | **~4.8 GB** ✅ |
 | **Headroom** | **~3.2 GB** |
+
+Note: YOLO moved to Container 1 — memory budget unchanged (~0.5 GB still allocated there, now under Isaac ROS line).
 
 **Critical:** Moondream must use NanoLLM MLC INT4 — NOT HuggingFace FP16 (~2GB).
 
@@ -157,18 +159,32 @@ Nav2 → /cmd_vel → microros_agent → WiFi → ESP32 → wheels
 |---|---|---|
 | `/` | Ubuntu + JetPack | ~40 GB |
 | `/var/lib/docker` | Container images | ~80 GB |
-| `~/robot/ros2_ws` | Container 1 workspace | ~10 GB |
+| `~/workspaces/isaac_ros-dev` | Container 1 workspace (isaac-cli default) | ~10 GB |
 | `~/robot/ai_ws` | Container 2 workspace | ~10 GB |
 | `~/robot/data` | Rosbags, maps, logs | ~100 GB |
-| Buffer | — | ~16 GB |
+| `~/robot/models` | TensorRT .engine files (mounted at /models in Container 1) | ~5 GB |
+| Buffer | — | ~11 GB |
 
 ## Pi5 ↔ Jetson
 
 - Same ROS2 Jazzy, ROS_DOMAIN_ID=0, same network
-- Pi5 subscribes: `/voice/user_input`, `/vision/objects_3d`, `/vision/query_result`, `/visual_slam/tracking/odometry`
+- Pi5 subscribes: `/voice/user_input`, `/vision/detections`, `/vision/query_result`, `/visual_slam/tracking/odometry`
 - Pi5 publishes: `/voice/robot_speech`, `/vision/query`, `/goal_pose`
 - Pi5 → Mac Mini: HTTP REST to Ollama API
 - Pi5 runs micro-ROS agent — subscribes `/cmd_vel` from Jetson Nav2, forwards to ESP32 over WiFi
+
+## VLM Split — When to Use Which
+
+| Query type | Route | Why |
+|---|---|---|
+| Rich description: "What room is this?", "Describe the scene" | Pi5 → Mac Mini Llava | Needs reasoning, latency OK |
+| Conversational vision: "Is the person happy?" | Pi5 → Mac Mini Llava | Complex inference |
+| Navigation lookups: "Is the chair still there?", "How far?" | Pi5 → Moondream (Jetson) | Repeated, latency-critical |
+| Object tracking during nav: frequent frame checks | Pi5 → Moondream (Jetson) | ~150ms local vs ~1s over network |
+
+**Rule:** Moondream for anything called repeatedly during active navigation. Mac Mini Llava for one-shot reasoning queries per conversation turn.
+
+Moondream stays loaded in VRAM permanently (always ready). Mac Mini VLM is on-demand over HTTP (`http://singireddys.local:8080/v1`).
 
 ## micro-ROS
 

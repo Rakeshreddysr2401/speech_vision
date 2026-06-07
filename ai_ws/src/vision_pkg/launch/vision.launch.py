@@ -10,13 +10,7 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        Node(
-            package='vision_pkg',
-            executable='detector_node',
-            name='detector_node',
-            parameters=[config],
-            output='screen',
-        ),
+        # detector_node removed — YOLOv8 runs as isaac_ros_yolov8 in Container 1 (NITROS zero-copy)
         Node(
             package='vision_pkg',
             executable='moondream_node',

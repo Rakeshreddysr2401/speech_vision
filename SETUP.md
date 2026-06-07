@@ -54,9 +54,12 @@ docker run --rm --runtime nvidia ubuntu:24.04 nvidia-smi
 ## STEP 5 — Create Directory Structure
 
 ```bash
+# Container 1 workspace (Isaac ROS — isaac-cli default path)
+mkdir -p ~/workspaces/isaac_ros-dev/src
+
 # Container 2 workspace (AI stack — only custom code lives here)
 mkdir -p ~/robot/ai_ws/src/voice_pkg
-mkdir -p ~/robot/ai_ws/src/vision_pkg
+mkdir -p ~/robot/ai_ws/src/vision_pkg    # moondream_node only — YOLOv8 is in Container 1
 mkdir -p ~/robot/ai_ws/src/bringup_pkg
 
 # Shared
@@ -64,8 +67,9 @@ mkdir -p ~/robot/data/maps
 mkdir -p ~/robot/data/rosbags
 mkdir -p ~/robot/config
 mkdir -p ~/robot/logs
+mkdir -p ~/robot/models    # TensorRT .engine files (survive container rebuilds)
 ```
-Container 1 uses Isaac ROS packages only — no custom workspace needed.
+Container 1 workspace is at `~/workspaces/isaac_ros-dev/` (isaac-cli default — mounted inside container at `/workspaces/isaac_ros-dev`). No custom nodes go here; Isaac ROS packages are installed via apt inside the container.
 
 ---
 
@@ -110,20 +114,61 @@ source ~/.bashrc
 
 ## STEP 7 — Set Up Container 1: Isaac ROS (via isaac-cli)
 
+> `isaac-ros activate` is the daily entry point — run it every time you want to work inside Container 1.
+> Packages installed inside persist between sessions as long as the container is not deleted.
+
 ```bash
-# Install Isaac ROS CLI
-pip3 install isaac-ros-cli
-isaac-ros-cli --version
+# 7a. Add Isaac ROS apt repo on HOST (Jetson = noble-jetpack, not noble)
+k="/usr/share/keyrings/nvidia-isaac-ros.gpg"
+curl -fsSL https://isaac.download.nvidia.com/isaac-ros/repos.key | sudo gpg --dearmor \
+    | sudo tee -a $k > /dev/null
 
-# Initialize — pulls correct NGC JP7.1 container, sets up workspace mounts
-sudo isaac-ros init docker
+f="/etc/apt/sources.list.d/nvidia-isaac-ros.list"
+sudo touch $f
+s="deb [signed-by=$k] https://isaac.download.nvidia.com/isaac-ros/release-4.4 noble-jetpack main"
+grep -qxF "$s" $f || echo "$s" | sudo tee -a $f
 
-# Verify image pulled
-docker images | grep isaac
+sudo apt-get update
+
+# 7b. Install CLI on HOST
+sudo apt-get install -y isaac-ros-cli
+isaac-ros --version
+
+# 7c. Set workspace env var (add to ~/.bashrc so it persists)
+echo 'export ISAAC_ROS_WS=~/workspaces/isaac_ros-dev' >> ~/.bashrc
+source ~/.bashrc
+
+# 7d. Enter the dev container
+#     First run: pulls NGC base image (~10-20 min). Subsequent runs: instant.
+#     Your workspace at $ISAAC_ROS_WS is auto-mounted at /workspaces/isaac_ros-dev inside.
+isaac-ros activate
+
+# ── Now you are INSIDE the container ──────────────────────────────────
+
+# 7e. Install Isaac ROS packages via apt (persists inside container between sessions)
+sudo apt-get update
+sudo apt-get install -y ros-jazzy-isaac-ros-visual-slam
+sudo apt-get install -y ros-jazzy-isaac-ros-image-pipeline
+sudo apt-get install -y ros-jazzy-isaac-ros-nvblox
+# nav2-bringup = standard ROS2 Nav2 stack; nvblox_nav2 costmap plugin comes with nvblox above
+sudo apt-get install -y ros-jazzy-nav2-bringup
+sudo apt-get install -y ros-jazzy-isaac-ros-yolov8
+
+# 7f. Verify
+source /opt/ros/jazzy/setup.bash
+ros2 pkg list | grep isaac    # expect visual_slam, image_pipeline, nvblox, yolov8
+ros2 pkg list | grep nvblox   # expect nvblox_nav2 here (ships with nvblox, not separately)
 ```
 
-> JP7.1 container runs on JP7.2 — ABI compatible (minor revision).
-> When NVIDIA publishes JP7.2 images: `sudo isaac-ros init docker --version <new-tag>`
+### Container 1 Modes Reference
+
+| Mode | Command | When to use |
+|---|---|---|
+| Dev shell | `isaac-ros activate` | Installing packages, testing, launching nodes |
+| Production | `docker compose up` | Robot running autonomously (Phase 2+) |
+| Custom image | `isaac-ros activate --build-local` | Only if you need packages not in NGC base |
+
+> JP7.1 NGC container is ABI compatible with JP7.2 — safe to use until NVIDIA publishes JP7.2 images.
 
 ---
 
@@ -171,8 +216,10 @@ services:
       - FASTRTPS_DEFAULT_PROFILES_FILE=/config/fastdds_unicast.xml
     volumes:
       - /dev:/dev
+      - ${HOME}/workspaces/isaac_ros-dev:/workspaces/isaac_ros-dev
       - ${HOME}/robot/config:/config
       - ${HOME}/robot/data:/data
+      - ${HOME}/robot/models:/models
     restart: unless-stopped
 
   # ── Container 2: AI Stack ────────────────────────────────────────
@@ -213,13 +260,13 @@ EOF
 All node code is already written. Copy `robot/ai_ws/` from this machine to Jetson:
 
 ```bash
-# From Windows machine:
-scp -r C:\Projects\ai_experiments\robot\ai_ws rakhi24@192.168.55.1:~/robot/
+# From Windows machine (PowerShell):
+scp -r C:\Users\rasingired\PycharmProjects\speech_vision\ai_ws rakhi24@192.168.55.1:~/robot/
 ```
 
 Packages in `ai_ws`:
 - `voice_pkg`: wakeword_node, stt_node, tts_node
-- `vision_pkg`: detector_node, moondream_node
+- `vision_pkg`: moondream_node (YOLOv8 moved to Container 1 via isaac_ros_yolov8)
 - `bringup_pkg`: launch files (voice/vision/robot)
 
 ---
@@ -258,6 +305,35 @@ ros2 topic echo /visual_slam/tracking/odometry
 
 ---
 
+## STEP 12.5 — Convert YOLOv8 Weights to TensorRT (run once)
+
+TensorRT engines are device-specific — must be built on the Jetson, not on your dev machine.
+
+```bash
+# On host: download YOLOv8s weights to models dir
+pip3 install ultralytics
+cd ~/robot/models
+python3 -c "from ultralytics import YOLO; YOLO('yolov8s.pt')"
+# yolov8s.pt now at ~/robot/models/yolov8s.pt
+
+# Enter Container 1
+isaac-cli activate
+
+# Inside container: convert to TensorRT engine
+cd /models
+ros2 run isaac_ros_yolov8 isaac_ros_yolov8_converter \
+    --input /models/yolov8s.pt \
+    --output /models/yolov8s.engine
+
+# Verify engine file exists
+ls -lh /models/yolov8s.engine
+```
+
+> Conversion takes ~5-10 min on Orin. Engine is saved to `~/robot/models/` on the host — survives container rebuilds.
+> Use `yolov8s` (small) — fits VRAM budget, runs real-time on Orin Nano.
+
+---
+
 ## STEP 13 — Test Phase 2: Voice Loop
 
 ```bash
@@ -279,7 +355,7 @@ ros2 topic echo /voice/user_input
 Speak: **"Hey Jarvis, go to the kitchen"**
 
 ```
-wakeword_node detects "hey jarvis"
+wakeword_node detects "hey_jarvis"
   → publishes /voice/wake_detected: True
   → stt_node activates Whisper small
   → publishes /voice/user_input: "go to the kitchen"
@@ -302,9 +378,21 @@ tts_node receives /voice/robot_speech
 
 ## Pending Items
 
-- [ ] Mac Mini IP → replace `MAC_MINI_IP` in docker-compose.yml
-- [ ] Write node code (STEP 10) — next session
-- [ ] First SLAM map save: `ros2 run nav2_map_server map_saver_cli -f ~/robot/data/maps/home`
+### Container 1 — DONE ✅
+- [x] Isaac ROS apt repo added (noble-jetpack)
+- [x] isaac-ros-cli installed
+- [x] Docker group + nvidia default runtime configured
+- [x] isaac-ros init docker + isaac-ros activate working
+- [x] All packages installed: visual_slam, image_pipeline, nvblox, nav2-bringup, yolov8
+
+### Next Session — TODO (in order)
+- [ ] PHASE 3: Create directory structure on host (exit container first, run mkdir commands)
+- [ ] PHASE 4: YOLOv8s TensorRT conversion (download weights on host, convert inside Container 1)
+- [ ] PHASE 5: Test SLAM with D555 camera (Container 1)
+- [ ] Container 2: Install jetson-containers, build ai_stack image (Whisper + Kokoro + Moondream + openWakeWord)
+- [ ] Container 2: Copy ai_ws code from Windows to Jetson, build inside Container 2
+- [ ] docker-compose.yml: Replace MAC_MINI_IP with actual Mac Mini IP
+- [ ] Test voice loop: wake → STT → Pi5 → TTS end-to-end
+- [ ] Test SLAM map save: `ros2 run nav2_map_server map_saver_cli -f ~/robot/data/maps/home`
 - [ ] nvblox + Nav2 costmap tuning (Phase 2)
-- [ ] Custom wake word if desired (after system stable)
 - [ ] systemd auto-start (after all steps pass clean)

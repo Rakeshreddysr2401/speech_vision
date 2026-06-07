@@ -18,7 +18,7 @@ setup(
     zip_safe=True,
     entry_points={
         'console_scripts': [
-            'detector_node = vision_pkg.detector_node:main',
+            # detector_node removed — YOLOv8 runs as isaac_ros_yolov8 in Container 1
             'moondream_node = vision_pkg.moondream_node:main',
         ],
     },
