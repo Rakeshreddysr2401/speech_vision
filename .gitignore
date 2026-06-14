@@ -25,3 +25,10 @@ coverage.xml
 *.swo
 *~
 .DS_Store
+
+# Local workspace folders
+/config/
+/data/
+/logs/
+/models/
+
