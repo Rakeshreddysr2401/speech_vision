@@ -1,23 +1,45 @@
 voice_pkg:
+
   wakeword_node:
     ros__parameters:
       wake_word: "hey_jarvis"
-      threshold: 0.5          # confidence threshold 0.0-1.0
-      chunk_size: 1280        # audio chunk size (80ms at 16kHz)
+      threshold: 0.5          # confidence 0.0–1.0
+      chunk_size: 1280        # 80ms at 16kHz — must match openWakeWord expectation
+      # mic_preference options:
+      #   auto       — BT first, then USB headset, then system default
+      #   bluetooth  — force BT (falls back to auto if none)
+      #   usb        — force USB headset (falls back to auto if none)
+      #   <string>   — substring match on device name, e.g. "Jabra"
+      mic_preference: "auto"
 
   stt_node:
     ros__parameters:
-      model: "small"          # whisper model: tiny/base/small/medium
+      mic_preference: "auto"
+      silence_timeout: 1.5    # seconds of silence that finalises a utterance
+
+      # ── Backend selection ────────────────────────────────────────────────
+      # Change this one line to swap the entire STT engine.
+      # Options: faster_whisper
+      stt_backend: "faster_whisper"
+
+      # ── faster_whisper params (only used when stt_backend = faster_whisper)
+      model: "small"          # tiny | base | small | medium | large-v3
       language: "en"
-      device: "cuda"
-      compute_type: "float16"
+      device: "cuda"          # cuda | cpu
+      compute_type: "float16" # float16 (GPU) | int8 (CPU/low-VRAM)
       beam_size: 5
-      vad_filter: true        # filter non-speech via built-in VAD
-      silence_timeout: 1.5    # seconds of silence before finalising transcription
+      vad_filter: true        # silently drop non-speech segments
 
   tts_node:
     ros__parameters:
-      voice: "af_heart"       # kokoro voice model
-      speed: 1.0
-      device: "cuda"
+      speaker_preference: "auto"  # same options as mic_preference
       sample_rate: 22050
+
+      # ── Backend selection ────────────────────────────────────────────────
+      # Change this one line to swap the entire TTS engine.
+      # Options: kokoro
+      tts_backend: "kokoro"
+
+      # ── Kokoro params (only used when tts_backend = kokoro)
+      voice: "af_heart"       # af_heart | af_bella | am_adam | am_michael | ...
+      speed: 1.0

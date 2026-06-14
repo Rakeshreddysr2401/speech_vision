@@ -1,3 +1,4 @@
+
 # Robot Architecture — Decision Record
 
 ## Hardware
@@ -43,12 +44,20 @@ Base: ros:jazzy-ros-base + pytorch + faster-whisper + kokoro + openwakeword + ml
 
 ~/robot/ai_ws/src/
 ├── voice_pkg/
+│   ├── audio_device.py  ← device discovery: BT > USB headset > system default
+│   │                       find_input_device(preference) / find_output_device(preference)
+│   │                       preference: 'auto' | 'bluetooth' | 'usb' | '<name substring>'
+│   ├── audio_capture.py ← shared sd.InputStream → queue, used by wakeword + stt
+│   ├── stt_backend.py   ← abstract STTBackend + FasterWhisperBackend
+│   │                       swap engine: change stt_backend param, add class to _REGISTRY
+│   ├── tts_backend.py   ← abstract TTSBackend + KokoroBackend
+│   │                       swap engine: change tts_backend param, add class to _REGISTRY
 │   ├── wakeword_node    ← always-on CPU, openWakeWord "hey_jarvis"
 │   │                       publishes: /voice/wake_detected (Bool)
 │   ├── stt_node         ← triggered by /voice/wake_detected
-│   │                       Whisper small on GPU
+│   │                       default: Whisper small on GPU via FasterWhisperBackend
 │   │                       publishes: /voice/user_input (String)
-│   └── tts_node         ← Kokoro on GPU
+│   └── tts_node         ← default: Kokoro on GPU via KokoroBackend
 │                           subscribes: /voice/robot_speech (String)
 │                           publishes:  /voice/tts_speaking (Bool) → mutes stt_node
 │
@@ -61,6 +70,26 @@ Base: ros:jazzy-ros-base + pytorch + faster-whisper + kokoro + openwakeword + ml
 │
 └── bringup_pkg/         ← launch files for all modes
 ```
+
+### Voice Stack — Audio Device Priority
+
+| Priority | Type | How to select |
+|---|---|---|
+| 1 (highest) | Bluetooth | `mic_preference: "bluetooth"` or `auto` when BT paired |
+| 2 | USB headset | `mic_preference: "usb"` or `auto` when USB plugged in |
+| 3 (fallback) | System default | `mic_preference: "auto"` with no BT/USB present |
+| Manual | Any device | `mic_preference: "Jabra"` — case-insensitive substring match |
+
+Change `mic_preference` / `speaker_preference` in `voice_params.yaml` — no code changes needed.
+
+### Voice Stack — Swapping STT/TTS Models
+
+To swap the STT engine (e.g. add a new Whisper variant or a different engine entirely):
+1. Add a subclass of `STTBackend` in `stt_backend.py`
+2. Register it in `_REGISTRY`
+3. Set `stt_backend: "your_key"` in `voice_params.yaml`
+
+Same pattern for TTS via `tts_backend.py`. Nodes never import the model directly — only through the backend interface.
 YOLOv8 moved to Container 1 (isaac_ros_yolov8) — runs NITROS zero-copy in the same GPU pipeline as visual_slam.
 
 Both containers: `network_mode: host` → ROS2 topics flow freely.
@@ -109,12 +138,15 @@ Nav2 → /cmd_vel → microros_agent → WiFi → ESP32 → wheels
 
 ## Build Order
 
-| Phase | What | Milestone |
-|---|---|---|
-| 1 | SLAM | D555 → visual_slam → odometry publishing |
-| 2 | Nav2 | nvblox + Nav2 → robot drives to (x,y) goal |
-| 3 | Voice loop | wake → STT → Pi5 → TTS → spoken response |
-| 4 | Object nav | YOLO + spatial + moondream → "go to the chair" works |
+| Phase | What | Milestone | Status |
+|---|---|---|---|
+| 1 | SLAM | D555 → visual_slam → odometry publishing | Blocked — D555 ETA ~1 week |
+| 2 | Nav2 | nvblox + Nav2 → robot drives to (x,y) goal | Blocked — needs Phase 1 |
+| 3 | Voice loop | wake → STT → Pi5 → TTS → spoken response | **Active** — no camera needed |
+| 4 | Object nav | YOLO + moondream → "go to the chair" works | Blocked — needs Phase 1 |
+
+> Phase 3 is being developed first (USB/BT mic + speaker, Logitech camera optional).
+> Phases 1, 2, 4 resume when D555 arrives.
 
 ## Isaac ROS Packages
 

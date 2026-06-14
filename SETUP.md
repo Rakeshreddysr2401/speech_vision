@@ -385,14 +385,199 @@ tts_node receives /voice/robot_speech
 - [x] isaac-ros init docker + isaac-ros activate working
 - [x] All packages installed: visual_slam, image_pipeline, nvblox, nav2-bringup, yolov8
 
-### Next Session — TODO (in order)
-- [ ] PHASE 3: Create directory structure on host (exit container first, run mkdir commands)
-- [ ] PHASE 4: YOLOv8s TensorRT conversion (download weights on host, convert inside Container 1)
-- [ ] PHASE 5: Test SLAM with D555 camera (Container 1)
-- [ ] Container 2: Install jetson-containers, build ai_stack image (Whisper + Kokoro + Moondream + openWakeWord)
-- [ ] Container 2: Copy ai_ws code from Windows to Jetson, build inside Container 2
-- [ ] docker-compose.yml: Replace MAC_MINI_IP with actual Mac Mini IP
-- [ ] Test voice loop: wake → STT → Pi5 → TTS end-to-end
+### Voice Pipeline (Container 2) — TODO (in order)
+- [ ] Bluetooth audio: pair via Jetson desktop UI (Settings → Bluetooth) — already have desktop so no terminal steps needed
+- [ ] Create directory structure: `~/robot/ai_ws`, `~/robot/models`, `~/robot/data`, etc.
+- [ ] Copy `ai_ws` code from Windows to Jetson (`scp -r`)
+- [ ] Install jetson-containers (`git clone` + `bash install.sh`)
+- [ ] Build Container 2 image — `jetson-containers build ros:jazzy-ros-base pytorch faster-whisper kokoro openwakeword --name ai_stack:jp7.2` (~60–90 min)
+- [ ] Install `sounddevice` inside Container 2 (`pip install sounddevice`)
+- [ ] Build `ai_ws` inside Container 2 (`colcon build --symlink-install`)
+- [ ] Verify audio devices: `python3 -c "import sounddevice; print(sounddevice.query_devices())"` — update `mic_preference` / `speaker_preference` in `voice_params.yaml` if needed
+- [ ] Test voice pipeline: `ros2 launch bringup_pkg voice.launch.py` → say "Hey Jarvis" → check `/voice/user_input`
+
+### SLAM / Nav2 (Container 1) — blocked on D555 camera (ETA: ~1 week)
+- [ ] Configure D555 static IP (192.168.1.100 via router DHCP reservation)
+- [ ] Test SLAM: `ros2 launch isaac_ros_visual_slam isaac_ros_visual_slam.launch.py`
+- [ ] YOLOv8s TensorRT conversion (download weights on host, convert inside Container 1)
+- [ ] nvblox + Nav2 costmap tuning
 - [ ] Test SLAM map save: `ros2 run nav2_map_server map_saver_cli -f ~/robot/data/maps/home`
-- [ ] nvblox + Nav2 costmap tuning (Phase 2)
+
+### Final Integration
+- [ ] docker-compose.yml: replace `MAC_MINI_IP` with actual Mac Mini IP
+- [ ] Test full voice loop: wake → STT → Pi5 → LLM → TTS end-to-end
 - [ ] systemd auto-start (after all steps pass clean)
+
+---
+
+## STEP 15 — Bluetooth Audio Setup
+
+Since the Jetson has a desktop UI, pair via **Settings → Bluetooth** — no terminal steps needed.
+
+After pairing, verify the device is visible to PulseAudio:
+
+```bash
+pactl list short sinks    # output devices
+pactl list short sources  # input devices
+# Your BT device should appear in both lists
+```
+
+If neither command finds it, install the Bluetooth audio module and restart:
+
+```bash
+sudo apt install -y pulseaudio-module-bluetooth
+pulseaudio -k && pulseaudio --start
+```
+
+Once paired, the device will appear in `sounddevice.query_devices()` inside Container 2. Set `mic_preference: "bluetooth"` and `speaker_preference: "bluetooth"` in `voice_params.yaml` to force it.
+
+> **Container access to PulseAudio:** Container 2 needs to reach the host PulseAudio socket. The `docker-compose.yml` already passes `--device /dev/snd` and `network_mode: host`, which is sufficient on Jetson Ubuntu 24.04 with PulseAudio running as a user service.
+
+---
+
+## STEP 16 — Build Container 2: AI Stack
+
+```bash
+git clone https://github.com/dusty-nv/jetson-containers ~/jetson-containers
+cd ~/jetson-containers && bash install.sh
+source ~/.bashrc
+jetson-containers show    # verify
+
+# Build (~60–90 min, run once, cached forever)
+jetson-containers build \
+    ros:jazzy-ros-base \
+    pytorch \
+    faster-whisper \
+    kokoro \
+    openwakeword \
+    --name ai_stack:jp7.2
+
+docker images | grep ai_stack    # verify
+```
+
+> `mlc` is omitted here — added back when Moondream is needed (D555 phase).
+
+---
+
+## STEP 17 — Build ai_ws Inside Container 2
+
+```bash
+docker run --rm -it --runtime nvidia \
+    -v ~/robot/ai_ws:/workspaces/ai_ws \
+    --device /dev/snd \
+    ai_stack:jp7.2 bash
+
+# Inside container:
+pip install sounddevice
+source /opt/ros/jazzy/setup.bash
+cd /workspaces/ai_ws
+colcon build --symlink-install
+```
+
+---
+
+## STEP 18 — Check Audio Devices
+
+Run inside Container 2 after the build:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+source /workspaces/ai_ws/install/setup.bash
+python3 -c "import sounddevice; print(sounddevice.query_devices())"
+```
+
+Match the device name to `mic_preference` / `speaker_preference` in `voice_params.yaml`:
+
+| Scenario | Setting |
+|---|---|
+| Any connected device, auto-pick | `auto` (default) |
+| Force Bluetooth | `bluetooth` |
+| Force USB headset | `usb` |
+| Specific device by name | e.g. `"Jabra"` (case-insensitive substring) |
+
+---
+
+## STEP 19 — Test Voice Pipeline
+
+```bash
+# Terminal 1 — launch all three voice nodes
+docker exec -it ai_stack bash
+source /opt/ros/jazzy/setup.bash
+source /workspaces/ai_ws/install/setup.bash
+ros2 launch bringup_pkg voice.launch.py
+
+# Terminal 2 — watch transcription output
+docker exec -it ai_stack bash
+source /opt/ros/jazzy/setup.bash
+ros2 topic echo /voice/user_input
+```
+
+Say **"Hey Jarvis, hello"** — you should see the transcribed text appear in Terminal 2.
+
+To test TTS independently (without Pi5):
+```bash
+ros2 topic pub --once /voice/robot_speech std_msgs/msg/String "data: 'Hello, I am your robot'"
+# You should hear the spoken response through the speaker
+```
+
+---
+
+## STEP 20 — Extending Container 2 Later (adding new packages)
+
+Container 2 is built once and rebuilt when new AI packages are needed. The build is layered — jetson-containers caches each package layer, so adding one new package only rebuilds from that layer onward.
+
+### When D555 arrives — add Moondream (MLC)
+
+```bash
+cd ~/jetson-containers
+jetson-containers build \
+    ros:jazzy-ros-base \
+    pytorch \
+    faster-whisper \
+    kokoro \
+    openwakeword \
+    mlc \
+    --name ai_stack:jp7.2-vlm
+```
+
+`mlc` adds MLC LLM runtime (~2GB download). Moondream INT4 model loads inside the container at runtime — no separate build step.
+
+### General pattern — adding any new package
+
+```bash
+# 1. Check if the package exists in jetson-containers
+jetson-containers show | grep <package-name>
+
+# 2. Rebuild with the new package appended, bump the image tag
+jetson-containers build \
+    ros:jazzy-ros-base \
+    pytorch \
+    faster-whisper \
+    kokoro \
+    openwakeword \
+    <new-package> \
+    --name ai_stack:<new-tag>
+
+# 3. Update docker-compose.yml image tag for ai_stack service
+#    image: ai_stack:<new-tag>
+```
+
+### If a package is not in jetson-containers — use apt inside the container
+
+For standard ROS2 or Python packages not in jetson-containers, install inside a running container and commit it:
+
+```bash
+docker run -it --runtime nvidia ai_stack:jp7.2 bash
+
+# Inside: install what you need
+sudo apt-get install -y ros-jazzy-<package>
+pip install <python-package>
+exit
+
+# Commit the layer to a new image
+docker commit <container-id> ai_stack:jp7.2-custom
+
+# Update docker-compose.yml to use ai_stack:jp7.2-custom
+```
+
+> Prefer jetson-containers packages over manual `apt install` inside containers — they are pre-built for the Jetson GPU and tested against JetPack. Use `apt` only for pure ROS2 packages or Python-only libraries with no GPU component.
