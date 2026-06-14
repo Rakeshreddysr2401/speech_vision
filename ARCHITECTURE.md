@@ -40,7 +40,9 @@ No custom nodes needed — Pi5 publishes /goal_pose directly to Nav2 over ROS2.
 
 ### Container 2 — AI Stack (built via jetson-containers)
 ```
-Base: ros:jazzy-ros-base + pytorch + faster-whisper + kokoro + openwakeword + mlc
+Base: ros:jazzy-ros-base + pytorch + faster-whisper + kokoro-tts:onnx
+      + openwakeword (pip)  ← pure Python, no GPU compile needed
+      + mlc (deferred)      ← added when D555 arrives for Moondream VLM
 
 ~/robot/ai_ws/src/
 ├── voice_pkg/
@@ -163,7 +165,7 @@ Nav2 → /cmd_vel → microros_agent → WiFi → ESP32 → wheels
 |---|---|---|---|
 | Wake word | openWakeWord "hey jarvis" | ~0 (CPU) | Always on, pre-trained |
 | STT | faster-whisper small | ~0.6 GB | ~1s latency, good accuracy |
-| TTS | Kokoro | ~0.4 GB | GPU-accelerated, natural voice |
+| TTS | Kokoro ONNX (`kokoro-tts:onnx`) | ~0.3 GB | ONNX Runtime CUDA EP — lighter than HF pipeline |
 | Detector | YOLOv8 (isaac_ros_yolov8, Container 1) | ~0.5 GB | 80 COCO classes, NITROS zero-copy |
 | VLM | Moondream2 NanoLLM MLC INT4 | ~0.8 GB | Frequent visual queries |
 | LLM + complex VLM | Mac Mini llama.cpp (Llava) | 0 on Jetson | Conversation, reasoning, rich scene description |

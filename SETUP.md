@@ -174,20 +174,21 @@ ros2 pkg list | grep nvblox   # expect nvblox_nav2 here (ships with nvblox, not 
 
 ## STEP 8 — Build Container 2: AI Stack (via jetson-containers)
 
-One combined image: ROS2 Jazzy + PyTorch + Whisper + Kokoro + openWakeWord + MLC (Moondream INT4).
+One combined image: ROS2 Jazzy + PyTorch + Whisper + Kokoro ONNX.
+`mlc` is deferred — only needed for Moondream VLM (D555 phase, ~1 week away).
+`openwakeword` is installed via pip after the build (pure Python, no GPU compile needed).
 
 **Build time: ~60-90 min. Run once, cached forever.**
 
 ```bash
-cd ~/jetson-containers
+# First: update jetson-containers to avoid known dependency resolution bugs
+cd ~/jetson-containers && git pull
 
 jetson-containers build \
     ros:jazzy-ros-base \
     pytorch \
     faster-whisper \
-    kokoro \
-    openwakeword \
-    mlc \
+    kokoro-tts:onnx \
     --name ai_stack:jp7.2
 
 docker images | grep ai_stack    # verify
@@ -390,8 +391,9 @@ tts_node receives /voice/robot_speech
 - [ ] Create directory structure: `~/robot/ai_ws`, `~/robot/models`, `~/robot/data`, etc.
 - [ ] Copy `ai_ws` code from Windows to Jetson (`scp -r`)
 - [ ] Install jetson-containers (`git clone` + `bash install.sh`)
-- [ ] Build Container 2 image — `jetson-containers build ros:jazzy-ros-base pytorch faster-whisper kokoro openwakeword --name ai_stack:jp7.2` (~60–90 min)
-- [ ] Install `sounddevice` inside Container 2 (`pip install sounddevice`)
+- [ ] `cd ~/jetson-containers && git pull` — always pull before building
+- [ ] Build Container 2 image — `jetson-containers build ros:jazzy-ros-base pytorch faster-whisper kokoro-tts:onnx --name ai_stack:jp7.2` (~60–90 min)
+- [ ] Install pip deps inside Container 2: `pip install sounddevice openwakeword`
 - [ ] Build `ai_ws` inside Container 2 (`colcon build --symlink-install`)
 - [ ] Verify audio devices: `python3 -c "import sounddevice; print(sounddevice.query_devices())"` — update `mic_preference` / `speaker_preference` in `voice_params.yaml` if needed
 - [ ] Test voice pipeline: `ros2 launch bringup_pkg voice.launch.py` → say "Hey Jarvis" → check `/voice/user_input`
@@ -438,28 +440,32 @@ Once paired, the device will appear in `sounddevice.query_devices()` inside Cont
 ## STEP 16 — Build Container 2: AI Stack
 
 ```bash
+# If not already cloned:
 git clone https://github.com/dusty-nv/jetson-containers ~/jetson-containers
 cd ~/jetson-containers && bash install.sh
 source ~/.bashrc
 jetson-containers show    # verify
 
+# Always pull before building — avoids known dependency resolution bugs
+cd ~/jetson-containers && git pull
+
 # Build (~60–90 min, run once, cached forever)
+# kokoro-tts:onnx = ONNX Runtime + CUDA EP, lighter than HF variant
+# openwakeword = pip install after build (pure Python, no GPU compile)
+# mlc = deferred to D555 phase (Moondream VLM not needed yet)
 jetson-containers build \
     ros:jazzy-ros-base \
     pytorch \
     faster-whisper \
-    kokoro \
-    openwakeword \
+    kokoro-tts:onnx \
     --name ai_stack:jp7.2
 
 docker images | grep ai_stack    # verify
 ```
 
-> `mlc` is omitted here — added back when Moondream is needed (D555 phase).
-
 ---
 
-## STEP 17 — Build ai_ws Inside Container 2
+## STEP 17 — Install pip deps + Build ai_ws Inside Container 2
 
 ```bash
 docker run --rm -it --runtime nvidia \
@@ -468,7 +474,7 @@ docker run --rm -it --runtime nvidia \
     ai_stack:jp7.2 bash
 
 # Inside container:
-pip install sounddevice
+pip install sounddevice openwakeword
 source /opt/ros/jazzy/setup.bash
 cd /workspaces/ai_ws
 colcon build --symlink-install
@@ -529,36 +535,38 @@ Container 2 is built once and rebuilt when new AI packages are needed. The build
 ### When D555 arrives — add Moondream (MLC)
 
 ```bash
-cd ~/jetson-containers
+cd ~/jetson-containers && git pull
+
 jetson-containers build \
     ros:jazzy-ros-base \
     pytorch \
     faster-whisper \
-    kokoro \
-    openwakeword \
+    kokoro-tts:onnx \
     mlc \
     --name ai_stack:jp7.2-vlm
 ```
 
-`mlc` adds MLC LLM runtime (~2GB download). Moondream INT4 model loads inside the container at runtime — no separate build step.
+`mlc` adds MLC LLM runtime (~2GB download). Moondream INT4 model loads inside the container at runtime — no separate build step. Always `git pull` before building to avoid dependency recursion bugs.
 
 ### General pattern — adding any new package
 
 ```bash
-# 1. Check if the package exists in jetson-containers
+# 1. Update jetson-containers (avoids stale dependency graphs)
+cd ~/jetson-containers && git pull
+
+# 2. Check if the package exists
 jetson-containers show | grep <package-name>
 
-# 2. Rebuild with the new package appended, bump the image tag
+# 3. Rebuild with the new package appended, bump the image tag
 jetson-containers build \
     ros:jazzy-ros-base \
     pytorch \
     faster-whisper \
-    kokoro \
-    openwakeword \
+    kokoro-tts:onnx \
     <new-package> \
     --name ai_stack:<new-tag>
 
-# 3. Update docker-compose.yml image tag for ai_stack service
+# 4. Update docker-compose.yml image tag for ai_stack service
 #    image: ai_stack:<new-tag>
 ```
 

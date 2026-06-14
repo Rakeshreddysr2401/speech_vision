@@ -21,6 +21,8 @@ class TTSNode(Node):
         # ── Kokoro params (ignored when using a different backend)
         self.declare_parameter('voice', 'af_heart')
         self.declare_parameter('speed', 1.0)
+        self.declare_parameter('model_path', 'kokoro-v1.0.onnx')
+        self.declare_parameter('voices_path', 'voices.bin')
 
         speaker_pref = self.get_parameter('speaker_preference').value
         sample_rate  = self.get_parameter('sample_rate').value
@@ -29,8 +31,10 @@ class TTSNode(Node):
         # ── Load TTS backend
         backend_kwargs = {
             'kokoro': dict(
-                voice = self.get_parameter('voice').value,
-                speed = self.get_parameter('speed').value,
+                voice       = self.get_parameter('voice').value,
+                speed       = self.get_parameter('speed').value,
+                model_path  = self.get_parameter('model_path').value,
+                voices_path = self.get_parameter('voices_path').value,
             ),
         }.get(backend_name, {})
 

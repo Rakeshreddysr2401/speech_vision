@@ -33,7 +33,7 @@ voice_pkg:
   tts_node:
     ros__parameters:
       speaker_preference: "auto"  # same options as mic_preference
-      sample_rate: 22050
+      sample_rate: 24000          # kokoro-onnx native output rate
 
       # ── Backend selection ────────────────────────────────────────────────
       # Change this one line to swap the entire TTS engine.
@@ -41,5 +41,7 @@ voice_pkg:
       tts_backend: "kokoro"
 
       # ── Kokoro params (only used when tts_backend = kokoro)
-      voice: "af_heart"       # af_heart | af_bella | am_adam | am_michael | ...
+      voice: "af_heart"           # af_heart | af_bella | am_adam | am_michael | ...
       speed: 1.0
+      model_path: "kokoro-v1.0.onnx"
+      voices_path: "voices.bin"
