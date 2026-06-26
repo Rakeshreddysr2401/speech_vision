@@ -1,0 +1,50 @@
+services:
+
+  # ── Container 1: Isaac ROS ──────────────────────────────────────────────
+  isaac_ros:
+    image: nvcr.io/nvidia/isaac/ros:isaac_ros_28556f8bc78a98822bd08b2d7c6fcf9b-arm64-jetpack
+    container_name: isaac_ros
+    runtime: nvidia
+    network_mode: host
+    privileged: true
+    stdin_open: true
+    tty: true
+    environment:
+      - ROS_DOMAIN_ID=0
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+      - FASTRTPS_DEFAULT_PROFILES_FILE=/config/fastdds_unicast.xml
+    volumes:
+      - /dev:/dev
+      - ${HOME}/workspaces/isaac_ros-dev:/workspaces/isaac_ros-dev
+      - ${HOME}/robot/config:/config
+      - ${HOME}/robot/data:/data
+      - ${HOME}/robot/models:/models
+    restart: unless-stopped
+
+  # ── Container 2: AI Stack ───────────────────────────────────────────────
+  ai_stack:
+    image: ai_stack:dev-0.0.8
+    container_name: ai_stack
+    runtime: nvidia
+    network_mode: host
+    privileged: true
+    stdin_open: true
+    tty: true
+    environment:
+      - ROS_DOMAIN_ID=0
+      - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+      - FASTRTPS_DEFAULT_PROFILES_FILE=/config/fastdds_unicast.xml
+      # /opt/venv: jetson-containers packages (torch, whisper, kokoro …)
+      # /usr/lib/python3/dist-packages: colcon_ros + catkin_pkg (needed for ros2 CLI)
+      - PYTHONPATH=/opt/venv/lib/python3.12/site-packages:/usr/lib/python3/dist-packages
+    volumes:
+      - ${HOME}/robot/ai_ws:/workspaces/ai_ws
+      - ${HOME}/robot/config:/config
+      - ${HOME}/robot/data:/data
+      - ${HOME}/robot/models:/model_store
+    devices:
+      - /dev/snd:/dev/snd
+    restart: unless-stopped
+
+  # micro-ROS agent runs on Pi5:
+  #   ros2 run micro_ros_agent micro_ros_agent udp4 --port 8888

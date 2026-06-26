@@ -1,0 +1,72 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# ai_stack:dev-0.0.8 — Container 2 image for Jetson Orin Nano 8GB (JetPack 7.2)
+#
+# STATUS: Built via docker commit (not docker build).
+#         Base image ai_stack:final was built from jetson-containers; subsequent
+#         changes were applied inside the running container and committed:
+#             docker commit ai_stack ai_stack:dev-0.0.8
+#         Do NOT re-run docker build — ros2-debs/ was a one-time build artifact
+#         and is no longer present in this repo.
+#
+# BUILT FROM (jetson-containers layers, in order):
+#   ros:jazzy-ros-base → pytorch_2.12 → ctranslate2 → onnxruntime
+#   → huggingface_hub → faster-whisper → video-codec-sdk → llvm_22
+#   → ffmpeg_8.1 → pybind11 → pyav → torchcodec → torchaudio → numba
+#   → espeak → kokoro-tts_onnx
+#
+# THEN added on top (applied inside container, committed as dev-0.0.8):
+#   - ROS2 Jazzy (force-installed from local .deb files — packages.ros.org
+#     unreachable inside Docker on Jetson at build time)
+#   - opencv-python-headless
+#   - moondream + transformers + einops
+#   - openai-whisper — CUDA-accelerated STT (~0.4s on Orin with base model)
+#   - webrtcvad — built from source for aarch64/Python 3.12 (always-listening VAD)
+#   - coverage==7.14.3 — fixes numba import crash against system coverage (<7.0)
+#   - numba/misc/coverage_support.py patched — guards coverage.types attribute check
+#   - PYTHONPATH fix so ros2 CLI (system Python) sees venv packages
+#
+# KEY RUNTIME FACTS:
+#   - STT: openai-whisper on CUDA (whisper_cuda backend), base model, ~0.4s/utterance
+#     ctranslate2 (faster-whisper) also available as CPU/int8 fallback
+#   - TTS: Kokoro (ONNX, CPU) — fast enough for real-time synthesis
+#   - Always-listening with WebRTC VAD (mode 3) — no wake word required
+#   - PyTorch CUDA available; Orin Nano CC 8.7 triggers a compatibility warning — harmless
+#   - cuDNN disabled in WhisperCudaBackend to work around version mismatch on JetPack 7.2
+#
+# TO ADD NEW PACKAGES (do not rebuild from scratch):
+#   1. Enter the running container:
+#        docker exec -it ai_stack bash
+#   2. Install what you need:
+#        uv pip install <package>          # Python packages
+#        apt-get install -y <package>      # system packages (apt may be broken — prefer pip)
+#   3. Exit and commit to a new image:
+#        docker commit ai_stack ai_stack:<new-tag>
+#   4. Update docker-compose.yml to use the new tag.
+#
+# TO REBUILD FROM SCRATCH (only if the image is lost):
+#   1. Re-run the jetson-containers build (see SETUP.md Step 8/16)
+#   2. Collect fresh ros2-debs (download from packages.ros.org on a machine with internet)
+#   3. Restore this Dockerfile's original RUN layers and run:
+#        docker build -f Dockerfile.ai -t ai_stack:final .
+# ──────────────────────────────────────────────────────────────────────────────
+
+ARG AI_BASE=ai_stack:jp7.2-r39.2.tegra-aarch64-cu132-24.04
+FROM ${AI_BASE}
+
+# ROS2 Jazzy — installed from pre-downloaded .deb files
+# (ros2-debs/ no longer in repo — baked into ai_stack:final)
+# COPY ros2-debs/*.deb /tmp/ros2-debs/   ← DO NOT UNCOMMENT without restoring debs
+
+# moondream (vision language model — small, fast, runs on Jetson)
+# NOTE: pyvips/libvips42t64 cannot be apt-installed (broken apt state from force-ROS install)
+#       image_crops.py blob was patched to use PIL instead — see models/hf_cache patch notes
+
+WORKDIR /workspaces/ai_ws
+
+RUN echo "source /opt/ros/jazzy/setup.bash" >> /root/.bashrc
+
+ENV ROS_DOMAIN_ID=0
+
+# /opt/venv        — jetson-containers Python packages (torch, whisper, kokoro …)
+# /usr/lib/python3/dist-packages — colcon_ros + catkin_pkg (needed for ros2 CLI)
+ENV PYTHONPATH=/opt/venv/lib/python3.12/site-packages:/usr/lib/python3/dist-packages

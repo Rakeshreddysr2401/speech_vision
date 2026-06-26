@@ -1,7 +1,10 @@
 """Shared audio capture — one InputStream per consumer, queue-based delivery."""
+import logging
 import queue
 import numpy as np
 import sounddevice as sd
+
+_log = logging.getLogger(__name__)
 
 
 class AudioCapture:
@@ -54,7 +57,7 @@ class AudioCapture:
 
     def _cb(self, indata: np.ndarray, frames: int, time, status):
         if status:
-            pass  # overflow/underflow — tolerate
+            _log.debug('Audio stream status: %s', status)
         try:
             self._queue.put_nowait(indata[:, 0].copy())
         except queue.Full:

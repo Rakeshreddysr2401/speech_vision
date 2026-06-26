@@ -1,15 +1,21 @@
 import sounddevice as sd
 
-_BT_KEYWORDS  = {'bluetooth', 'bluez', 'a2dp', 'hsp', 'hfp', 'bt ', ' bt'}
-_USB_KEYWORDS = {'usb', 'headset', 'jabra', 'logitech', 'plantronics',
-                 'sennheiser', 'microphone', 'mic', 'bose', 'sony', 'hyperx'}
+# Priority 3 — Bluetooth (wireless, usually best isolation)
+_BT_KEYWORDS = {'bluetooth', 'bluez', 'a2dp', 'hsp', 'hfp', 'bt ', ' bt'}
+# Priority 2 — named headset/mic brands (dedicated audio hardware, not webcam mics)
+_HEADSET_BRANDS = {'plantronics', 'jabra', 'sennheiser', 'logitech', 'bose',
+                   'sony', 'hyperx', 'steelseries', 'blackwire', 'poly'}
+# Priority 1 — generic USB/mic keyword (catches webcams, generic USB audio, etc.)
+_GENERIC_MIC = {'headset', 'microphone', 'mic', 'usb audio'}
 
 
 def _score(name: str) -> int:
     lower = name.lower()
     if any(k in lower for k in _BT_KEYWORDS):
+        return 3
+    if any(k in lower for k in _HEADSET_BRANDS):
         return 2
-    if any(k in lower for k in _USB_KEYWORDS):
+    if any(k in lower for k in _GENERIC_MIC):
         return 1
     return 0
 
@@ -63,13 +69,13 @@ def find_input_device(preference: str = 'auto') -> tuple[int | None, str]:
 
     if preference == 'bluetooth':
         for i, d in _devices_with_inputs():
-            if _score(d['name']) == 2:
+            if _score(d['name']) == 3:
                 return i, d['name']
         return _auto_select_input()
 
     if preference == 'usb':
         for i, d in _devices_with_inputs():
-            if _score(d['name']) == 1:
+            if _score(d['name']) == 2:
                 return i, d['name']
         return _auto_select_input()
 
@@ -86,13 +92,13 @@ def find_output_device(preference: str = 'auto') -> tuple[int | None, str]:
 
     if preference == 'bluetooth':
         for i, d in _devices_with_outputs():
-            if _score(d['name']) == 2:
+            if _score(d['name']) == 3:
                 return i, d['name']
         return _auto_select_output()
 
     if preference == 'usb':
         for i, d in _devices_with_outputs():
-            if _score(d['name']) == 1:
+            if _score(d['name']) == 2:
                 return i, d['name']
         return _auto_select_output()
 

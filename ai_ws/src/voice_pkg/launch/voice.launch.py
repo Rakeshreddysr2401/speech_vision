@@ -12,13 +12,6 @@ def generate_launch_description():
     return LaunchDescription([
         Node(
             package='voice_pkg',
-            executable='wakeword_node',
-            name='wakeword_node',
-            parameters=[config],
-            output='screen',
-        ),
-        Node(
-            package='voice_pkg',
             executable='stt_node',
             name='stt_node',
             parameters=[config],

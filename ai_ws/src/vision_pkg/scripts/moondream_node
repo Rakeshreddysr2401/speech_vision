@@ -1,0 +1,3 @@
+#!/usr/bin/env python3
+from vision_pkg.moondream_node import main
+main()

@@ -18,7 +18,6 @@ setup(
     zip_safe=True,
     entry_points={
         'console_scripts': [
-            'wakeword_node = voice_pkg.wakeword_node:main',
             'stt_node = voice_pkg.stt_node:main',
             'tts_node = voice_pkg.tts_node:main',
         ],

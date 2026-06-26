@@ -1,124 +1,149 @@
+import queue
 import threading
 import numpy as np
+import webrtcvad
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool, String
 
-from voice_pkg.audio_device import find_input_device, list_devices
 from voice_pkg.audio_capture import AudioCapture
+from voice_pkg.audio_device import find_input_device, list_devices
 from voice_pkg.stt_backend import load_stt_backend
 
-_RMS_THRESHOLD = 0.01  # below this level is considered silence
+# WebRTC VAD requires 20ms frames: 320 samples at 16kHz
+_VAD_FRAME_SAMPLES = 320
 
 
 class STTNode(Node):
     def __init__(self):
         super().__init__('stt_node')
 
-        # ── Audio params
         self.declare_parameter('mic_preference', 'auto')
         self.declare_parameter('silence_timeout', 1.5)
-
-        # ── Backend selection
+        self.declare_parameter('min_speech_duration', 0.5)
+        self.declare_parameter('vad_aggressiveness', 2)
+        self.declare_parameter('chunk_frames', 1280)
         self.declare_parameter('stt_backend', 'faster_whisper')
-
-        # ── faster_whisper params (ignored when using a different backend)
         self.declare_parameter('model', 'small')
         self.declare_parameter('language', 'en')
-        self.declare_parameter('device', 'cuda')
-        self.declare_parameter('compute_type', 'float16')
-        self.declare_parameter('beam_size', 5)
-        self.declare_parameter('vad_filter', True)
+        self.declare_parameter('device', 'cpu')
+        self.declare_parameter('compute_type', 'int8')
+        self.declare_parameter('download_root', '/model_store/whisper_cache')
 
         mic_pref        = self.get_parameter('mic_preference').value
         silence_timeout = self.get_parameter('silence_timeout').value
+        min_speech      = self.get_parameter('min_speech_duration').value
+        vad_mode        = self.get_parameter('vad_aggressiveness').value
+        chunk_frames    = self.get_parameter('chunk_frames').value
         backend_name    = self.get_parameter('stt_backend').value
 
-        self._pub = self.create_publisher(String, '/voice/user_input', 10)
-        self._tts_speaking = False
-        self._listening    = False
-        self._lock         = threading.Lock()
+        self._sample_rate   = 16000
+        self._silence_limit = int(silence_timeout * self._sample_rate / chunk_frames)
+        self._min_frames    = int(min_speech * self._sample_rate / chunk_frames)
 
-        self.create_subscription(Bool, '/voice/tts_speaking',  self._tts_cb,  10)
-        self.create_subscription(Bool, '/voice/wake_detected', self._wake_cb, 10)
+        self._pub  = self.create_publisher(String, '/voice/user_input', 10)
+        self._lock = threading.Lock()
 
-        # ── Load STT backend
+        self._tts_speaking   = False
+        self._is_recording   = False
+        self._speech_frames  = []
+        self._silence_frames = 0
+
+        self.create_subscription(Bool, '/voice/tts_speaking', self._tts_cb, 10)
+
+        self._vad = webrtcvad.Vad(vad_mode)
+
+        self._transcription_queue = queue.Queue(maxsize=2)
+        threading.Thread(target=self._transcription_worker, daemon=True).start()
+
         backend_kwargs = {
             'faster_whisper': dict(
-                model        = self.get_parameter('model').value,
-                device       = self.get_parameter('device').value,
-                compute_type = self.get_parameter('compute_type').value,
-                language     = self.get_parameter('language').value,
-                beam_size    = self.get_parameter('beam_size').value,
-                vad_filter   = self.get_parameter('vad_filter').value,
+                model         = self.get_parameter('model').value,
+                device        = self.get_parameter('device').value,
+                compute_type  = self.get_parameter('compute_type').value,
+                language      = self.get_parameter('language').value,
+                download_root = self.get_parameter('download_root').value or None,
+            ),
+            'whisper_cuda': dict(
+                model    = self.get_parameter('model').value,
+                language = self.get_parameter('language').value,
             ),
         }.get(backend_name, {})
-
         self._backend = load_stt_backend(backend_name, **backend_kwargs)
-        self.get_logger().info(f'STT backend: {backend_name}')
 
-        # ── Audio capture
         self.get_logger().info(list_devices())
         device_idx, device_name = find_input_device(mic_pref)
-        self.get_logger().info(f'Mic selected: {device_name} (idx={device_idx})')
+        self.get_logger().info(f'Mic: {device_name} (idx={device_idx})')
 
-        sample_rate      = 16000
-        chunk_frames     = 1024
-        self._sample_rate = sample_rate
-        silence_limit    = int(silence_timeout * sample_rate / chunk_frames)
-
-        self._capture = AudioCapture(device_idx=device_idx, sample_rate=sample_rate,
-                                     chunk_frames=chunk_frames)
+        self._capture = AudioCapture(
+            device_idx=device_idx,
+            sample_rate=self._sample_rate,
+            chunk_frames=chunk_frames,
+        )
         self._capture.start()
+        threading.Thread(target=self._audio_loop, daemon=True).start()
 
-        self._buffer         = []
-        self._silence_frames = 0
-        self._silence_limit  = silence_limit
-
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-        self.get_logger().info('STT ready')
-
-    # ── ROS callbacks ───────────────────────────────────────────────────────
+        actual_device = 'cuda' if backend_name == 'whisper_cuda' else self.get_parameter('device').value
+        self.get_logger().info(
+            f'STT ready — backend={backend_name} '
+            f'model={self.get_parameter("model").value} '
+            f'device={actual_device}'
+        )
 
     def _tts_cb(self, msg: Bool):
-        self._tts_speaking = msg.data
-
-    def _wake_cb(self, msg: Bool):
-        if msg.data and not self._tts_speaking:
-            with self._lock:
-                self._listening      = True
-                self._buffer         = []
+        with self._lock:
+            self._tts_speaking = msg.data
+            if msg.data:
+                self._is_recording   = False
+                self._speech_frames  = []
                 self._silence_frames = 0
-            self.get_logger().info('Listening for speech...')
 
-    # ── Audio loop ──────────────────────────────────────────────────────────
+    def _is_speech(self, chunk: np.ndarray) -> bool:
+        try:
+            return self._vad.is_speech(
+                chunk[:_VAD_FRAME_SAMPLES].astype(np.int16).tobytes(),
+                self._sample_rate,
+            )
+        except Exception:
+            return False
 
-    def _run(self):
+    def _audio_loop(self):
         while rclpy.ok():
             chunk = self._capture.read(timeout=1.0)
-            if chunk is None or self._tts_speaking:
+            if chunk is None:
                 continue
-
             with self._lock:
-                if not self._listening:
+                if self._tts_speaking:
                     continue
-                self._ingest(chunk)
+                self._process(chunk)
 
-    def _ingest(self, chunk: np.ndarray):
-        rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2))) / 32768.0
-
-        if rms > _RMS_THRESHOLD:
-            self._buffer.append(chunk.copy())
+    def _process(self, chunk: np.ndarray):
+        if self._is_speech(chunk):
+            if not self._is_recording:
+                self._is_recording   = True
+                self._speech_frames  = []
+                self._silence_frames = 0
+            self._speech_frames.append(chunk.copy())
             self._silence_frames = 0
-        elif self._buffer:
+        elif self._is_recording:
+            self._speech_frames.append(chunk.copy())
             self._silence_frames += 1
             if self._silence_frames >= self._silence_limit:
-                audio = np.concatenate(self._buffer).astype(np.float32) / 32768.0
-                self._buffer         = []
+                if len(self._speech_frames) >= self._min_frames:
+                    audio = np.concatenate(self._speech_frames).astype(np.float32) / 32768.0
+                    if not self._transcription_queue.full():
+                        self._transcription_queue.put_nowait(audio)
+                self._speech_frames  = []
                 self._silence_frames = 0
-                self._listening      = False
-                threading.Thread(target=self._transcribe, args=(audio,), daemon=True).start()
+                self._is_recording   = False
+
+    def _transcription_worker(self):
+        while True:
+            try:
+                audio = self._transcription_queue.get(timeout=1.0)
+                self._transcribe(audio)
+            except queue.Empty:
+                continue
 
     def _transcribe(self, audio: np.ndarray):
         try:
