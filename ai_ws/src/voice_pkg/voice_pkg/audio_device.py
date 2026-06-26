@@ -1,7 +1,7 @@
 import sounddevice as sd
 
 # Priority 3 — Bluetooth (wireless, usually best isolation)
-_BT_KEYWORDS = {'bluetooth', 'bluez', 'a2dp', 'hsp', 'hfp', 'bt ', ' bt'}
+_BT_KEYWORDS = {'bluetooth', 'bluez', 'bluealsa', 'a2dp', 'hsp', 'hfp', 'bt ', ' bt'}
 # Priority 2 — named headset/mic brands (dedicated audio hardware, not webcam mics)
 _HEADSET_BRANDS = {'plantronics', 'jabra', 'sennheiser', 'logitech', 'bose',
                    'sony', 'hyperx', 'steelseries', 'blackwire', 'poly'}

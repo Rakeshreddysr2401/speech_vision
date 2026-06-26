@@ -37,11 +37,15 @@ services:
       # /opt/venv: jetson-containers packages (torch, whisper, kokoro …)
       # /usr/lib/python3/dist-packages: colcon_ros + catkin_pkg (needed for ros2 CLI)
       - PYTHONPATH=/opt/venv/lib/python3.12/site-packages:/usr/lib/python3/dist-packages
+      # PipeWire socket — lets the container use BT audio via the host PipeWire session
+      - PIPEWIRE_REMOTE=/run/pipewire/pipewire-0
     volumes:
       - ${HOME}/robot/ai_ws:/workspaces/ai_ws
       - ${HOME}/robot/config:/config
       - ${HOME}/robot/data:/data
       - ${HOME}/robot/models:/model_store
+      # Expose host PipeWire socket (handles BT audio, routes through ALSA plugin)
+      - /run/user/2002/pipewire-0:/run/pipewire/pipewire-0
     devices:
       - /dev/snd:/dev/snd
     restart: unless-stopped

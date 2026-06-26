@@ -42,6 +42,8 @@ class TTSNode(Node):
         self.get_logger().info(
             f'Speaker: {output_name} (idx={self._output_idx}, pref="{speaker_pref}")')
 
+        self._speaker_pref = speaker_pref
+
         self._speaking_pub = self.create_publisher(Bool, '/voice/tts_speaking', 10)
         self.create_subscription(String, '/voice/robot_speech', self._speech_cb, 10)
 
@@ -49,7 +51,15 @@ class TTSNode(Node):
         self._queue: queue.Queue[str] = queue.Queue(maxsize=3)
         threading.Thread(target=self._worker, daemon=True).start()
 
+        self.create_timer(10.0, self._check_device)
+
         self.get_logger().info('TTS ready')
+
+    def _check_device(self):
+        new_idx, new_name = find_output_device(self._speaker_pref)
+        if new_idx != self._output_idx:
+            self.get_logger().info(f'Speaker switched: {new_name} (idx={new_idx})')
+            self._output_idx = new_idx
 
     def _speech_cb(self, msg: String):
         text = msg.data.strip()

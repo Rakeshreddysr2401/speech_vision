@@ -71,17 +71,22 @@ class STTNode(Node):
         }.get(backend_name, {})
         self._backend = load_stt_backend(backend_name, **backend_kwargs)
 
+        self._mic_pref    = mic_pref
+        self._chunk_frames = chunk_frames
+
         self.get_logger().info(list_devices())
-        device_idx, device_name = find_input_device(mic_pref)
-        self.get_logger().info(f'Mic: {device_name} (idx={device_idx})')
+        self._device_idx, device_name = find_input_device(mic_pref)
+        self.get_logger().info(f'Mic: {device_name} (idx={self._device_idx})')
 
         self._capture = AudioCapture(
-            device_idx=device_idx,
+            device_idx=self._device_idx,
             sample_rate=self._sample_rate,
             chunk_frames=chunk_frames,
         )
         self._capture.start()
         threading.Thread(target=self._audio_loop, daemon=True).start()
+
+        self.create_timer(10.0, self._check_device)
 
         actual_device = 'cuda' if backend_name == 'whisper_cuda' else self.get_parameter('device').value
         self.get_logger().info(
@@ -89,6 +94,24 @@ class STTNode(Node):
             f'model={self.get_parameter("model").value} '
             f'device={actual_device}'
         )
+
+    def _check_device(self):
+        new_idx, new_name = find_input_device(self._mic_pref)
+        if new_idx != self._device_idx:
+            self.get_logger().info(f'Mic switched: {new_name} (idx={new_idx})')
+            old = self._capture
+            self._capture = AudioCapture(
+                device_idx=new_idx,
+                sample_rate=self._sample_rate,
+                chunk_frames=self._chunk_frames,
+            )
+            self._capture.start()
+            old.stop()
+            with self._lock:
+                self._device_idx   = new_idx
+                self._is_recording = False
+                self._speech_frames  = []
+                self._silence_frames = 0
 
     def _tts_cb(self, msg: Bool):
         with self._lock:
@@ -159,6 +182,7 @@ class STTNode(Node):
     def destroy_node(self):
         self._capture.stop()
         super().destroy_node()
+
 
 
 def main(args=None):
