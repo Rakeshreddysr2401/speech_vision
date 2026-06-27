@@ -24,7 +24,14 @@ D555 static IP: 192.168.1.100 (set via router DHCP reservation)
 - All devices: ROS_DOMAIN_ID=0, ROS2 Jazzy
 - Topic namespacing: `/voice/`, `/vision/`, `/camera/` to keep things clean
 - D555 uses SafeDDS (Fast DDS compatible) — no librealsense SDK needed
-- DDS discovery: multicast first, fallback to unicast fastdds.xml if blocked
+- DDS discovery: **Ethernet-only unicast** between Jetson and Pi5 over a direct
+  cable — WiFi multicast was unreliable (router drops multicast between WiFi clients).
+  - Jetson eth `192.168.2.20`, Pi5 eth `192.168.2.10` (static, no gateway)
+  - Config: `config/fastdds_unicast.xml` (gitignored — recreate per `PI5_SETUP.md`),
+    mounted into both containers at `/config/fastdds_unicast.xml`
+  - `interfaceWhiteList` + `initialPeersList` lock all DDS to the cable
+  - WiFi (`192.168.1.x`) stays for internet, Mac Mini HTTP, and ESP32 micro-ROS —
+    none of which use DDS
 
 ## Two-Container Design
 
