@@ -12,7 +12,7 @@ stt_node:
     stt_backend: "whisper_cuda"
 
     # ── Model params (used by both backends) ─────────────────────────────────
-    model: "base"                # tiny(0.15s) | base(0.4s) | small | medium
+    model: "small"               # tiny(0.15s) | base(0.4s) | small | medium
     language: "en"
 
     # ── faster_whisper only ──────────────────────────────────────────────────

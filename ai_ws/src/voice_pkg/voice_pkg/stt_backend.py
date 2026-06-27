@@ -52,6 +52,19 @@ class WhisperCudaBackend(STTBackend):
     """
 
     def __init__(self, model: str = 'base', language: str = 'en'):
+        import sys, types as _types
+        # Stub numba before whisper imports it — numba breaks on this Jetson image
+        # due to coverage.types API mismatch. Whisper only needs numba for optional
+        # word-timestamp alignment which we never request.
+        if 'numba' not in sys.modules:
+            _nb = _types.ModuleType('numba')
+            def _passthrough(*a, **kw):
+                return a[0] if (len(a) == 1 and callable(a[0]) and not kw) else (lambda f: f)
+            _nb.jit = _passthrough
+            _nb.njit = _passthrough
+            _nb.typed = _types.ModuleType('numba.typed')
+            sys.modules['numba'] = _nb
+            sys.modules['numba.typed'] = _nb.typed
         import torch
         torch.backends.cudnn.enabled = False  # cuDNN version mismatch on Jetson
         import whisper

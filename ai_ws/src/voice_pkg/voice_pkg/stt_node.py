@@ -23,7 +23,7 @@ class STTNode(Node):
         self.declare_parameter('min_speech_duration', 0.5)
         self.declare_parameter('vad_aggressiveness', 2)
         self.declare_parameter('chunk_frames', 1280)
-        self.declare_parameter('stt_backend', 'faster_whisper')
+        self.declare_parameter('stt_backend', 'whisper_cuda')
         self.declare_parameter('model', 'small')
         self.declare_parameter('language', 'en')
         self.declare_parameter('device', 'cpu')
