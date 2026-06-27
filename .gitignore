@@ -32,3 +32,6 @@ coverage.xml
 /logs/
 /models/
 
+
+# Binary packages (installed directly into container via dpkg/docker cp)
+*.deb

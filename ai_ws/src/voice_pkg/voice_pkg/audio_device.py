@@ -1,23 +1,31 @@
 import sounddevice as sd
 
-# Priority 3 — Bluetooth (wireless, usually best isolation)
-_BT_KEYWORDS = {'bluetooth', 'bluez', 'bluealsa', 'a2dp', 'hsp', 'hfp', 'bt ', ' bt'}
-# Priority 2 — named headset/mic brands (dedicated audio hardware, not webcam mics)
-_HEADSET_BRANDS = {'plantronics', 'jabra', 'sennheiser', 'logitech', 'bose',
+# Priority 3 — named headset brands (dedicated audio hardware, plugged directly into Jetson)
+_HEADSET_BRANDS = {'plantronics', 'jabra', 'sennheiser', 'bose',
                    'sony', 'hyperx', 'steelseries', 'blackwire', 'poly'}
-# Priority 1 — generic USB/mic keyword (catches webcams, generic USB audio, etc.)
+# Priority 2 — Bluetooth (fallback when no wired headset present)
+_BT_KEYWORDS = {'bluetooth', 'bluez', 'bluealsa', 'a2dp', 'hsp', 'hfp', 'bt ', ' bt'}
+# Priority 1 — generic USB/mic keyword
 _GENERIC_MIC = {'headset', 'microphone', 'mic', 'usb audio'}
+
+# Webcam mics — never use as input regardless of other keyword matches
+_INPUT_BLACKLIST = {'brio', 'logitech', 'webcam', 'c920', 'c922', 'c925', 'c930'}
 
 
 def _score(name: str) -> int:
     lower = name.lower()
-    if any(k in lower for k in _BT_KEYWORDS):
-        return 3
     if any(k in lower for k in _HEADSET_BRANDS):
+        return 3
+    if any(k in lower for k in _BT_KEYWORDS):
         return 2
     if any(k in lower for k in _GENERIC_MIC):
         return 1
     return 0
+
+
+def _is_blacklisted_input(name: str) -> bool:
+    lower = name.lower()
+    return any(k in lower for k in _INPUT_BLACKLIST)
 
 
 def _devices_with_inputs():
@@ -29,8 +37,10 @@ def _devices_with_outputs():
 
 
 def _auto_select_input() -> tuple[int | None, str]:
-    best_idx, best_score, best_name = None, 0, 'system default'
+    best_idx, best_score, best_name = None, 0, 'BT via PipeWire (no ALSA mic found)'
     for i, d in _devices_with_inputs():
+        if _is_blacklisted_input(d['name']):
+            continue
         s = _score(d['name'])
         if s > best_score:
             best_score, best_idx, best_name = s, i, d['name']
@@ -38,7 +48,7 @@ def _auto_select_input() -> tuple[int | None, str]:
 
 
 def _auto_select_output() -> tuple[int | None, str]:
-    best_idx, best_score, best_name = None, 0, 'system default'
+    best_idx, best_score, best_name = None, 0, 'BT via PipeWire (no ALSA speaker found)'
     for i, d in _devices_with_outputs():
         s = _score(d['name'])
         if s > best_score:
@@ -59,7 +69,7 @@ def find_input_device(preference: str = 'auto') -> tuple[int | None, str]:
     """Return (device_index, name) for the best available input device.
 
     preference:
-      'auto'      — BT > USB headset > system default
+      'auto'      — wired headset > BT > system default (webcam mics always excluded)
       'bluetooth' — force BT; falls back to auto if none found
       'usb'       — force USB headset; falls back to auto if none found
       any string  — matched as a case-insensitive substring of the device name
@@ -69,13 +79,13 @@ def find_input_device(preference: str = 'auto') -> tuple[int | None, str]:
 
     if preference == 'bluetooth':
         for i, d in _devices_with_inputs():
-            if _score(d['name']) == 3:
+            if not _is_blacklisted_input(d['name']) and _score(d['name']) == 2:
                 return i, d['name']
         return _auto_select_input()
 
     if preference == 'usb':
         for i, d in _devices_with_inputs():
-            if _score(d['name']) == 2:
+            if not _is_blacklisted_input(d['name']) and _score(d['name']) == 3:
                 return i, d['name']
         return _auto_select_input()
 
@@ -92,13 +102,13 @@ def find_output_device(preference: str = 'auto') -> tuple[int | None, str]:
 
     if preference == 'bluetooth':
         for i, d in _devices_with_outputs():
-            if _score(d['name']) == 3:
+            if _score(d['name']) == 2:
                 return i, d['name']
         return _auto_select_output()
 
     if preference == 'usb':
         for i, d in _devices_with_outputs():
-            if _score(d['name']) == 2:
+            if _score(d['name']) == 3:
                 return i, d['name']
         return _auto_select_output()
 

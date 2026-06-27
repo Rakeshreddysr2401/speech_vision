@@ -6,7 +6,7 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool, String
 
-from voice_pkg.audio_capture import AudioCapture
+from voice_pkg.audio_capture import make_capture
 from voice_pkg.audio_device import find_input_device, list_devices
 from voice_pkg.stt_backend import load_stt_backend
 
@@ -78,7 +78,7 @@ class STTNode(Node):
         self._device_idx, device_name = find_input_device(mic_pref)
         self.get_logger().info(f'Mic: {device_name} (idx={self._device_idx})')
 
-        self._capture = AudioCapture(
+        self._capture = make_capture(
             device_idx=self._device_idx,
             sample_rate=self._sample_rate,
             chunk_frames=chunk_frames,
@@ -100,7 +100,7 @@ class STTNode(Node):
         if new_idx != self._device_idx:
             self.get_logger().info(f'Mic switched: {new_name} (idx={new_idx})')
             old = self._capture
-            self._capture = AudioCapture(
+            self._capture = make_capture(
                 device_idx=new_idx,
                 sample_rate=self._sample_rate,
                 chunk_frames=self._chunk_frames,

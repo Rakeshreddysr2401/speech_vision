@@ -21,12 +21,24 @@ class KokoroBackend(TTSBackend):
         self._speed  = speed
 
     def speak(self, text: str, output_device: int | None, sample_rate: int):
+        import os, subprocess
+        import numpy as np
         import sounddevice as sd
         samples, sr = self._kokoro.create(
             text, voice=self._voice, speed=self._speed, lang='en-us'
         )
-        sd.play(samples, samplerate=sr, device=output_device)
-        sd.wait()
+        if output_device is None:
+            # No ALSA hw device found — play via PipeWire (handles BT speakers)
+            subprocess.run(
+                ['/usr/local/bin/pw-cat', '--playback', '--format=f32',
+                 f'--rate={sr}', '--channels=1', '-'],
+                input=samples.astype(np.float32).tobytes(),
+                env={**os.environ},
+                check=False,
+            )
+        else:
+            sd.play(samples, samplerate=sr, device=output_device)
+            sd.wait()
 
 
 # ── Registry ────────────────────────────────────────────────────────────────

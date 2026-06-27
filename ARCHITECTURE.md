@@ -44,7 +44,7 @@ Base: ros:jazzy-ros-base + pytorch + faster-whisper + kokoro + openwakeword + ml
 
 ~/robot/ai_ws/src/
 ├── voice_pkg/
-│   ├── audio_device.py  ← device discovery: BT > USB headset > system default
+│   ├── audio_device.py  ← device discovery: USB headset > BT > system default
 │   │                       find_input_device(preference) / find_output_device(preference)
 │   │                       preference: 'auto' | 'bluetooth' | 'usb' | '<name substring>'
 │   ├── audio_capture.py ← shared sd.InputStream → queue, used by wakeword + stt
@@ -75,7 +75,7 @@ Base: ros:jazzy-ros-base + pytorch + faster-whisper + kokoro + openwakeword + ml
 
 | Priority | Type | How to select |
 |---|---|---|
-| 1 (highest) | Bluetooth | `mic_preference: "bluetooth"` or `auto` when BT paired |
+| 1 (highest) | USB headset | `mic_preference: "usb"` or `auto` when headset connected |
 | 2 | USB headset | `mic_preference: "usb"` or `auto` when USB plugged in |
 | 3 (fallback) | System default | `mic_preference: "auto"` with no BT/USB present |
 | Manual | Any device | `mic_preference: "Jabra"` — case-insensitive substring match |

@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# ai_stack:dev-0.0.8 — Container 2 image for Jetson Orin Nano 8GB (JetPack 7.2)
+# ai_stack:dev-0.0.9 — Container 2 image for Jetson Orin Nano 8GB (JetPack 7.2)
 #
 # STATUS: Built via docker commit (not docker build).
 #         Base image ai_stack:final was built from jetson-containers; subsequent
@@ -24,6 +24,14 @@
 #   - coverage==7.14.3 — fixes numba import crash against system coverage (<7.0)
 #   - numba/misc/coverage_support.py patched — guards coverage.types attribute check
 #   - PYTHONPATH fix so ros2 CLI (system Python) sees venv packages
+#
+# THEN added on top (applied inside container, committed as dev-0.0.9):
+#   - pw-cat binary + libpipewire-0.3 + all PipeWire modules (spa-0.2/, pipewire-0.3/)
+#   - libsndfile.so.1 — required by pw-cat for audio format support
+#   - PipeWire client config (/usr/share/pipewire/{client,client-rt}.conf)
+#   - PipeWire ALSA plugin (libasound_module_pcm_pipewire.so + conf.d/ configs)
+#   - webrtcvad 2.0.10 (pip, built from source for aarch64/Python 3.12)
+#   - voice_pkg: PipeWireCapture backend, headset>BT priority, Brio blacklist
 #
 # KEY RUNTIME FACTS:
 #   - STT: openai-whisper on CUDA (whisper_cuda backend), base model, ~0.4s/utterance

@@ -9,14 +9,14 @@ Two Docker containers share a ROS2 network (`ROS_DOMAIN_ID=0`, host networking):
 | Container | Image | Role |
 |-----------|-------|------|
 | `isaac_ros` | NVIDIA Isaac ROS | Navigation, perception, hardware drivers |
-| `ai_stack` | `ai_stack:dev-0.0.8` | Voice, vision, LLM inference |
+| `ai_stack` | `ai_stack:dev-0.0.9` | Voice, vision, LLM inference |
 
 ## AI Stack (`ai_stack`)
 
 ### Voice Pipeline (`voice_pkg`)
 
 ```
-Microphone (Plantronics Blackwire 3220)
+Mic — priority: Plantronics USB headset > BT (EVM EnGroove) > never Brio 100
     │
     ▼
 WebRTC VAD ──► silence detected ──► openai-whisper (CUDA, base model)
@@ -33,8 +33,14 @@ WebRTC VAD ──► silence detected ──► openai-whisper (CUDA, base model
                                    Kokoro TTS (ONNX, CPU)
                                           │
                                           ▼
-                               Speaker (same USB headset)
+                        Speaker — same device as mic (USB headset or BT)
 ```
+
+**Audio device selection** (`audio_device.py`):
+- Plantronics connected → use it for both mic and speaker (ALSA `hw:` device)
+- No headset → fall back to BT via PipeWire (`pw-cat` / `pw-play` subprocess)
+- Brio 100 webcam mic → always blacklisted, never used as input
+- Hot-swap: nodes re-detect every 10 s and switch automatically
 
 | Topic | Type | Direction |
 |-------|------|-----------|
@@ -78,5 +84,6 @@ docker commit ai_stack ai_stack:<new-tag>
 ## Hardware
 
 - **Robot computer:** Jetson Orin Nano 8GB (JetPack 7.2)
-- **Microphone / Speaker:** Plantronics Blackwire 3220 USB headset
+- **Microphone / Speaker:** Plantronics Blackwire 3220 USB headset (primary) / EVM EnGroove BT (fallback)
+- **Webcam:** Logitech Brio 100 (video only — mic blacklisted)
 - **Camera:** (tbd)
