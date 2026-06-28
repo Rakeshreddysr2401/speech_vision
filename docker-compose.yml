@@ -49,6 +49,10 @@ services:
       # Bind-mount /dev/snd as a directory so USB audio devices hot-plugged after
       # container start are visible (devices: takes a static snapshot at start time)
       - /dev/snd:/dev/snd
+      # Bind-mount whole /dev so the Logitech USB camera's /dev/videoN nodes (used by
+      # camera_node via V4L2) are visible — incl. ones hot-plugged after start.
+      # privileged alone lifts the cgroup device limit but doesn't import host device nodes.
+      - /dev:/dev
     restart: unless-stopped
 
   # micro-ROS agent runs on Pi5:

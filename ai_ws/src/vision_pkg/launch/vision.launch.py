@@ -11,6 +11,15 @@ def generate_launch_description():
 
     return LaunchDescription([
         # detector_node removed — YOLOv8 runs as isaac_ros_yolov8 in Container 1 (NITROS zero-copy)
+        # camera_node: single source of /camera/color/image_raw (Logitech USB cam on Jetson).
+        # The D555 PoE depth camera will publish these topics natively later.
+        Node(
+            package='vision_pkg',
+            executable='camera_node',
+            name='camera_node',
+            parameters=[config],
+            output='screen',
+        ),
         Node(
             package='vision_pkg',
             executable='moondream_node',

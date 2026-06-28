@@ -6,9 +6,10 @@
 | Device | Role |
 |---|---|
 | Jetson Orin Nano 8GB | Vision, SLAM, Nav2, STT, TTS — pure perception |
-| RealSense D555 (PoE) | Depth + RGB + IMU — publishes SafeDDS ROS2 topics natively |
+| Logitech USB cam (Brio 100) | **Current** RGB source — `camera_node` publishes `/camera/color/image_raw` |
+| RealSense D555 (PoE) | *Future depth upgrade* — Depth + RGB + IMU over SafeDDS (enables SLAM/Nav2/nvblox) |
 | Raspberry Pi 5 8GB | LangGraph brain, ROS2↔LangGraph bridge, micro-ROS agent |
-| Mac Mini 16GB | llama.cpp server — LLM + complex VLM queries (Llava) over HTTP |
+| Mac Mini 16GB | llama.cpp server — Gemma 3n E4B multimodal LLM/VLM over HTTP |
 | ESP32 | Motor controller (4 wheels, micro-ROS over WiFi) |
 
 ## Network Topology
@@ -69,6 +70,11 @@ Base: ros:jazzy-ros-base + pytorch + faster-whisper + kokoro + openwakeword + ml
 │                           publishes:  /voice/tts_speaking (Bool) → mutes stt_node
 │
 ├── vision_pkg/
+│   ├── camera_node      ← Logitech USB cam (V4L2). Background grab thread + throttled
+│   │                       publish so frames are always fresh, never buffered-stale.
+│   │                       publishes: /camera/color/image_raw            (Image, bgr8, 640x480 @ ~5fps)
+│   │                                  /camera/color/image_raw/compressed (CompressedImage, JPEG)
+│   │                       Single source of the RGB feed until the D555 arrives.
 │   └── moondream_node   ← NanoLLM MLC INT4 (~0.8GB VRAM)
 │                           subscribes: /vision/query (String)
 │                           publishes:  /vision/query_result (String)
@@ -106,10 +112,14 @@ One workspace: `ai_ws` → Container 2. Container 1 uses Isaac ROS packages only
 ## Full Data Flow
 
 ```
-D555 (SafeDDS/ethernet)
+Logitech USB cam → camera_node (Container 2)
+  → /camera/color/image_raw       → Container 2: moondream_node (on-demand queries)
+                                  → Container 1: isaac_ros_yolov8 (NITROS)   [when D555/SLAM stack runs]
+                                  → Pi5: agent_node look() (Gemma multimodal over network)
+
+D555 (SafeDDS/ethernet) — FUTURE depth upgrade
   → /camera/depth/image_rect_raw  → Container 1: isaac_ros_visual_slam (SLAM)
-  → /camera/color/image_raw       → Container 1: isaac_ros_yolov8 (NITROS)
-                                  → Container 2: moondream_node (on-demand queries only)
+  → /camera/color/image_raw       → (replaces camera_node as RGB source)
   → /camera/imu                   → Container 1: isaac_ros_visual_slam
 
 USB mic → wakeword_node (CPU)
@@ -129,9 +139,10 @@ Nav2 → /cmd_vel → microros_agent → WiFi → ESP32 → wheels
 
 | Topic | Type | From → To |
 |---|---|---|
-| `/camera/depth/image_rect_raw` | Image | D555 → visual_slam (NITROS) |
-| `/camera/color/image_raw` | Image | D555 → isaac_ros_yolov8 (Container 1), moondream_node (Container 2, on-demand) |
-| `/camera/imu` | Imu | D555 → visual_slam |
+| `/camera/color/image_raw` | Image | **camera_node** (Logitech) → moondream_node, isaac_ros_yolov8, Pi5 `look()` |
+| `/camera/color/image_raw/compressed` | CompressedImage | camera_node → optional low-bandwidth consumers |
+| `/camera/depth/image_rect_raw` | Image | D555 → visual_slam (NITROS) *(future)* |
+| `/camera/imu` | Imu | D555 → visual_slam *(future)* |
 | `/visual_slam/tracking/odometry` | Odometry | Isaac ROS → Nav2, Pi5 |
 | `/vision/detections` | Detection2DArray | isaac_ros_yolov8 (Container 1) → Pi5 (object awareness) |
 | `/vision/query` | String | Pi5 → moondream_node |
@@ -152,8 +163,10 @@ Nav2 → /cmd_vel → microros_agent → WiFi → ESP32 → wheels
 | 3 | Voice loop | wake → STT → Pi5 → TTS → spoken response | **Active** — no camera needed |
 | 4 | Object nav | YOLO + moondream → "go to the chair" works | Blocked — needs Phase 1 |
 
-> Phase 3 is being developed first (USB/BT mic + speaker, Logitech camera optional).
-> Phases 1, 2, 4 resume when D555 arrives.
+> Phase 3 is being developed first (USB/BT mic + speaker + Logitech camera via
+> `camera_node`, which now feeds `/camera/color/image_raw` to moondream and the Pi5
+> `look()` vision agent). Phases 1, 2, 4 resume when the D555 arrives and takes over
+> as the RGB+depth source.
 
 ## Isaac ROS Packages
 

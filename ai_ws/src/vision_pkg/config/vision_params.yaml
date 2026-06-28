@@ -1,4 +1,16 @@
 vision_pkg:
+  camera_node:
+    ros__parameters:
+      device: ""                   # "" = auto-discover by device_name; or "/dev/video0" / "0"
+      device_name: "Brio"          # Logitech Brio 100 — substring match on V4L2 device name
+      width: 640
+      height: 480
+      fps: 5.0                     # publish rate (Hz) — low to keep Jetson↔Pi5 DDS light
+      frame_id: "camera_color_optical_frame"
+      publish_compressed: true     # also emit /camera/color/image_raw/compressed (JPEG)
+      jpeg_quality: 85
+      flip: false                  # set true if camera is mounted upside-down
+
   detector_node:
     ros__parameters:
       model: "yolov8n.pt"       # nano model — fastest on Jetson; swap to yolov8s for more accuracy

@@ -20,6 +20,7 @@ setup(
     entry_points={
         'console_scripts': [
             # detector_node removed — YOLOv8 runs as isaac_ros_yolov8 in Container 1
+            'camera_node = vision_pkg.camera_node:main',
             'moondream_node = vision_pkg.moondream_node:main',
         ],
     },

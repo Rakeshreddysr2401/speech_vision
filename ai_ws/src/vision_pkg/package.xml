@@ -2,7 +2,7 @@
 <package format="3">
   <name>vision_pkg</name>
   <version>0.1.0</version>
-  <description>YOLO detection, D555 depth-fused spatial localisation, Moondream VLM nodes</description>
+  <description>USB camera publisher, YOLO detection, Moondream VLM nodes</description>
   <maintainer email="rakhi24@robot.local">rakhi24</maintainer>
   <license>MIT</license>
 
@@ -11,6 +11,7 @@
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>vision_msgs</exec_depend>
   <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
   <!-- spatial_node removed — nvblox handles 3D env mapping, moondream handles object localisation -->
 
   <buildtool_depend>ament_python</buildtool_depend>

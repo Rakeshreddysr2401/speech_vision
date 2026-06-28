@@ -59,7 +59,7 @@ mkdir -p ~/workspaces/isaac_ros-dev/src
 
 # Container 2 workspace (AI stack — only custom code lives here)
 mkdir -p ~/robot/ai_ws/src/voice_pkg
-mkdir -p ~/robot/ai_ws/src/vision_pkg    # moondream_node only — YOLOv8 is in Container 1
+mkdir -p ~/robot/ai_ws/src/vision_pkg    # camera_node + moondream_node — YOLOv8 is in Container 1
 mkdir -p ~/robot/ai_ws/src/bringup_pkg
 
 # Shared
@@ -73,7 +73,33 @@ Container 1 workspace is at `~/workspaces/isaac_ros-dev/` (isaac-cli default —
 
 ---
 
-## STEP 6 — Configure D555 Camera Network
+## STEP 6 — Camera
+
+### 6a — Logitech USB camera (current source)
+
+The Logitech Brio 100 plugs into the Jetson over USB. `camera_node` (Container 2,
+`vision_pkg`) publishes `/camera/color/image_raw` from it. No network config needed —
+just confirm the host sees a video device, then launch.
+
+```bash
+# On the host — confirm the camera enumerates
+ls -l /dev/video*
+v4l2-ctl --list-devices        # should list "Brio 100" (or your cam) and its /dev/videoN
+
+# Inside ai_stack — verify the frames publish (docker-compose now bind-mounts /dev)
+docker exec -it ai_stack bash
+cd /workspaces/ai_ws && ros2 launch vision_pkg vision.launch.py
+# In another shell:
+ros2 topic hz /camera/color/image_raw    # expect ~5 Hz
+```
+
+If `camera_node` logs "No camera available", set an explicit device in
+`vision_params.yaml` (`device: "/dev/video0"`) or adjust `device_name` to match the
+`v4l2-ctl --list-devices` name.
+
+### 6b — D555 Camera Network (future depth upgrade)
+
+When the D555 arrives it replaces `camera_node` as the RGB+depth source and enables SLAM/Nav2.
 
 1. Set D555 static IP via router DHCP reservation: `192.168.1.100`
 2. Confirm Jetson ethernet on same subnet:
@@ -266,7 +292,7 @@ scp -r C:\Users\rasingired\PycharmProjects\speech_vision\ai_ws rakhi24@192.168.5
 
 Packages in `ai_ws`:
 - `voice_pkg`: wakeword_node, stt_node, tts_node
-- `vision_pkg`: moondream_node (YOLOv8 moved to Container 1 via isaac_ros_yolov8)
+- `vision_pkg`: camera_node (Logitech USB → /camera/color/image_raw), moondream_node (YOLOv8 moved to Container 1 via isaac_ros_yolov8)
 - `bringup_pkg`: launch files (voice/vision/robot)
 
 ---

@@ -51,7 +51,34 @@ WebRTC VAD ──► silence detected ──► openai-whisper (CUDA, base model
 **STT latency:** ~0.4s end-to-end (silence timeout 0.8s + whisper base model on CUDA)
 
 ### Vision (`vision_pkg`)
-Moondream VLM for image captioning and visual Q&A.
+
+```
+Logitech USB cam ──► camera_node (V4L2, 640x480 @ ~5fps)
+                          │
+                          ▼
+                 /camera/color/image_raw  (sensor_msgs/Image, bgr8)
+                 /camera/color/image_raw/compressed (JPEG)
+                          │
+        ┌─────────────────┼──────────────────────────┐
+        ▼                 ▼                          ▼
+  moondream_node   isaac_ros_yolov8 (Container 1)  Pi5 agent_node look()
+  (on-demand VLM)  (object detection)              (Gemma multimodal over network)
+```
+
+- **`camera_node`** — single source of `/camera/color/image_raw`. Background grab
+  thread keeps the latest frame; a timer republishes at a throttled rate to keep the
+  Jetson↔Pi5 DDS link light. Auto-discovers the Logitech cam by V4L2 name (`device_name`),
+  or set `device` to a `/dev/videoN` path / index. The D555 will publish these topics
+  natively over SafeDDS later and replace this node.
+- **`moondream_node`** — Moondream VLM (NanoLLM MLC INT4) for on-demand image Q&A
+  (`/vision/query` → `/vision/query_result`).
+
+| Topic | Type | Direction |
+|-------|------|-----------|
+| `/camera/color/image_raw` | `sensor_msgs/Image` | camera_node → moondream, YOLO, Pi5 |
+| `/camera/color/image_raw/compressed` | `sensor_msgs/CompressedImage` | camera_node → low-bandwidth consumers |
+| `/vision/query` | `std_msgs/String` | Pi5 → moondream |
+| `/vision/query_result` | `std_msgs/String` | moondream → Pi5 |
 
 ## Quick Start
 
@@ -85,5 +112,5 @@ docker commit ai_stack ai_stack:<new-tag>
 
 - **Robot computer:** Jetson Orin Nano 8GB (JetPack 7.2)
 - **Microphone / Speaker:** Plantronics Blackwire 3220 USB headset (primary) / EVM EnGroove BT (fallback)
-- **Webcam:** Logitech Brio 100 (video only — mic blacklisted)
-- **Camera:** (tbd)
+- **Camera:** Logitech Brio 100 USB webcam (video via `camera_node`; its mic is blacklisted in the voice stack)
+- **Depth camera:** RealSense D555 (PoE) — *future upgrade*, will replace `camera_node` as the RGB+depth source and enable SLAM/Nav2
