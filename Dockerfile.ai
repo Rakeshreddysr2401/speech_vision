@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# ai_stack:dev-0.0.9 — Container 2 image for Jetson Orin Nano 8GB (JetPack 7.2)
+# ai_stack:dev-1.0.0 — Container 2 image for Jetson Orin Nano 8GB (JetPack 7.2)
 #
 # STATUS: Built via docker commit (not docker build).
 #         Base image ai_stack:final was built from jetson-containers; subsequent
@@ -39,6 +39,22 @@
 #   - webrtcvad 2.0.10 (pip, built from source for aarch64/Python 3.12)
 #   - voice_pkg: PipeWireCapture backend, headset>BT priority, Brio blacklist
 #
+# THEN added on top (applied inside container, committed as dev-1.0.0):
+#   - VISION: local "go near the cup" nav via YOLOv8n (vision_pkg/target_node).
+#     Installed WITHOUT clobbering the Jetson torch 2.12.0+cu130:
+#       - torchvision==0.27.0  (pip --no-deps from pypi.org; resolves to +cu130,
+#         the exact matched wheel — verified torch untouched + CUDA still works)
+#       - ultralytics==8.4.80  (pip --no-deps) + ultralytics-thop + py-cpuinfo
+#       - matplotlib + leaf deps (contourpy/cycler/fonttools/kiwisolver), all
+#         --no-deps so numpy/torch stay pinned   ← ultralytics imports matplotlib
+#     YOLOv8n: ~0.08 GB VRAM, ~33 ms/frame, "cup" is a COCO class. Needs
+#     torch.backends.cudnn.enabled=False (same cuDNN mismatch as whisper_cuda).
+#   - LOCAL MOONDREAM DROPPED: measured non-viable on 8 GB (FP16 ~3.75 GB,
+#     ~13 min load due to memory thrashing, OOMs alongside voice; INT4/INT8
+#     incompatible with its hand-rolled F.linear; nano_llm/MLC not built for JP7.2).
+#     Rich scene description stays on the Pi5/Mac-Mini Gemma look() tool.
+#     transformers restored to 5.12.1 (the Moondream test had downgraded it to 4.46.3).
+#
 # KEY RUNTIME FACTS:
 #   - STT: openai-whisper on CUDA (whisper_cuda backend), small model, ~1s/utterance
 #     ctranslate2 (faster-whisper) also available as CPU/int8 fallback
@@ -71,9 +87,9 @@ FROM ${AI_BASE}
 # (ros2-debs/ no longer in repo — baked into ai_stack:final)
 # COPY ros2-debs/*.deb /tmp/ros2-debs/   ← DO NOT UNCOMMENT without restoring debs
 
-# moondream (vision language model — small, fast, runs on Jetson)
-# NOTE: pyvips/libvips42t64 cannot be apt-installed (broken apt state from force-ROS install)
-#       image_crops.py blob was patched to use PIL instead — see models/hf_cache patch notes
+# VISION: YOLOv8n object detection for nav (torchvision 0.27.0+cu130 + ultralytics).
+# NOTE: local Moondream VLM was evaluated and DROPPED — does not fit 8GB alongside
+#       voice (see dev-1.0.0 changelog above). Rich VLM lives on the Pi5 Gemma look().
 
 WORKDIR /workspaces/ai_ws
 

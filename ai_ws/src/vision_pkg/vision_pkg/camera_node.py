@@ -10,20 +10,24 @@ Publishes:
 
 The raw `Image` is the contract the rest of the stack consumes:
   - Pi5 `agent_node` re-encodes it to JPEG for `look()` (Gemma multimodal)
-  - `moondream_node` reads it for on-demand VLM queries
-  - `detector_node` / isaac_ros_yolov8 reads it for object detection
+  - `target_node` reads it for YOLOv8n object localisation (nav)
 
 Defaults to 640x480 @ ~5 fps to keep DDS bandwidth low over the Jetson↔Pi5 link.
 The D555 PoE depth camera will later publish these topics natively over SafeDDS;
 until then this node is the single source of `/camera/color/image_raw`.
+
+We build sensor_msgs/Image by hand instead of using cv_bridge: cv_bridge's native
+module links libopencv_*.so.406 (runtime OpenCV 4.6) which isn't installed on this
+image, whereas a bgr8 frame is a trivial flat buffer. Python cv2 (self-contained)
+still handles capture and JPEG encoding.
 """
 
 import glob
 import threading
 
 import cv2
+import numpy as np
 import rclpy
-from cv_bridge import CvBridge
 from rclpy.node import Node
 from sensor_msgs.msg import CompressedImage, Image
 
@@ -54,7 +58,6 @@ class CameraNode(Node):
         self._jpeg_quality = int(self.get_parameter('jpeg_quality').value)
         self._flip = bool(self.get_parameter('flip').value)
 
-        self._bridge = CvBridge()
         self._cap = None
         self._latest = None
         self._lock = threading.Lock()
@@ -157,9 +160,17 @@ class CameraNode(Node):
 
         stamp = self.get_clock().now().to_msg()
         try:
-            img = self._bridge.cv2_to_imgmsg(frame, encoding='bgr8')
+            frame = np.ascontiguousarray(frame)
+            h, w = frame.shape[:2]
+            img = Image()
             img.header.stamp = stamp
             img.header.frame_id = self._frame_id
+            img.height = h
+            img.width = w
+            img.encoding = 'bgr8'
+            img.is_bigendian = 0
+            img.step = w * 3
+            img.data = frame.tobytes()
             self._pub.publish(img)
 
             if self._pub_compressed is not None:

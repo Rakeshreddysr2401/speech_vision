@@ -10,9 +10,8 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        # detector_node removed — YOLOv8 runs as isaac_ros_yolov8 in Container 1 (NITROS zero-copy)
         # camera_node: single source of /camera/color/image_raw (Logitech USB cam on Jetson).
-        # The D555 PoE depth camera will publish these topics natively later.
+        # Feeds the Pi5 agent's look() tool and the local target_node.
         Node(
             package='vision_pkg',
             executable='camera_node',
@@ -20,10 +19,12 @@ def generate_launch_description():
             parameters=[config],
             output='screen',
         ),
+        # target_node: YOLOv8n visual servoing — "where is <target>" for nav.
+        # Idle until the Pi5 agent sets a target on /vision/target.
         Node(
             package='vision_pkg',
-            executable='moondream_node',
-            name='moondream_node',
+            executable='target_node',
+            name='target_node',
             parameters=[config],
             output='screen',
         ),

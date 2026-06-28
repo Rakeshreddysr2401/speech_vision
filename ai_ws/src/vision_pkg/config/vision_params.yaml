@@ -11,16 +11,12 @@ vision_pkg:
       jpeg_quality: 85
       flip: false                  # set true if camera is mounted upside-down
 
-  detector_node:
+  target_node:
     ros__parameters:
-      model: "yolov8n.pt"       # nano model — fastest on Jetson; swap to yolov8s for more accuracy
-      confidence: 0.5
+      model: "/model_store/yolov8n.pt"   # YOLOv8n — ~0.08GB VRAM, ~33ms on Orin Nano
+      confidence: 0.4
       device: "cuda"
+      detect_rate: 5.0             # Hz — only runs while a target is set on /vision/target
       image_topic: "/camera/color/image_raw"
-
-  moondream_node:
-    ros__parameters:
-      model: "vikhyatk/moondream2"
-      revision: "2025-01-09"
-      backend: "nano_llm"       # NanoLLM MLC INT4 — do NOT use huggingface
-      image_topic: "/camera/color/image_raw"
+      target_topic: "/vision/target"
+      result_topic: "/vision/target_result"

@@ -75,11 +75,17 @@ Base: ros:jazzy-ros-base + pytorch + faster-whisper + kokoro + openwakeword + ml
 │   │                       publishes: /camera/color/image_raw            (Image, bgr8, 640x480 @ ~5fps)
 │   │                                  /camera/color/image_raw/compressed (CompressedImage, JPEG)
 │   │                       Single source of the RGB feed until the D555 arrives.
-│   └── moondream_node   ← NanoLLM MLC INT4 (~0.8GB VRAM)
-│                           subscribes: /vision/query (String)
-│                           publishes:  /vision/query_result (String)
-│                           note: handles object localisation via VLM — no spatial_node needed
-│                                 nvblox handles 3D env mapping for Nav2
+│   └── target_node      ← YOLOv8n (~0.08GB VRAM, ~33ms/frame on Orin Nano)
+│                           subscribes: /camera/color/image_raw (Image)
+│                                       /vision/target (String — COCO class, "" = idle)
+│                           publishes:  /vision/target_result (String JSON:
+│                                       {target, found, bearing_x[-1..1], rel_size, conf, stamp})
+│                           role: local "go near the cup" nav — gives the LangGraph
+│                                 agent a bearing + proximity signal to drive toward a target.
+│                           note: local Moondream/VLM was DROPPED — does not fit 8GB
+│                                 alongside voice (see Memory Budget). Rich scene
+│                                 description ("what do you see") is the Pi5/Mac-Mini
+│                                 Gemma look() tool, not a local VLM.
 │
 └── bringup_pkg/         ← launch files for all modes
 ```
@@ -113,8 +119,7 @@ One workspace: `ai_ws` → Container 2. Container 1 uses Isaac ROS packages only
 
 ```
 Logitech USB cam → camera_node (Container 2)
-  → /camera/color/image_raw       → Container 2: moondream_node (on-demand queries)
-                                  → Container 1: isaac_ros_yolov8 (NITROS)   [when D555/SLAM stack runs]
+  → /camera/color/image_raw       → Container 2: target_node (YOLOv8n nav directions)
                                   → Pi5: agent_node look() (Gemma multimodal over network)
 
 D555 (SafeDDS/ethernet) — FUTURE depth upgrade
@@ -129,7 +134,8 @@ USB mic → wakeword_node (CPU)
   → Pi5 LangGraph (subscribes over network)
       → Mac Mini llama.cpp HTTP (LLM + complex VLM: Llava)
       → /voice/robot_speech      → tts_node → Kokoro → USB speaker
-      → /vision/query            → moondream_node (fast/repeated lookups) → /vision/query_result → Pi5
+      → /vision/target           → target_node (YOLOv8n) → /vision/target_result → Pi5
+                                   (bearing + proximity → agent drives wheels toward target)
       → /goal_pose               → Nav2 directly
 
 Nav2 → /cmd_vel → microros_agent → WiFi → ESP32 → wheels
@@ -139,14 +145,13 @@ Nav2 → /cmd_vel → microros_agent → WiFi → ESP32 → wheels
 
 | Topic | Type | From → To |
 |---|---|---|
-| `/camera/color/image_raw` | Image | **camera_node** (Logitech) → moondream_node, isaac_ros_yolov8, Pi5 `look()` |
-| `/camera/color/image_raw/compressed` | CompressedImage | camera_node → optional low-bandwidth consumers |
+| `/camera/color/image_raw` | Image | **camera_node** (Logitech) → target_node, Pi5 `look()` |
+| `/camera/color/image_raw/compressed` | CompressedImage | camera_node → Pi5 `look()` / low-bandwidth consumers |
 | `/camera/depth/image_rect_raw` | Image | D555 → visual_slam (NITROS) *(future)* |
 | `/camera/imu` | Imu | D555 → visual_slam *(future)* |
 | `/visual_slam/tracking/odometry` | Odometry | Isaac ROS → Nav2, Pi5 |
-| `/vision/detections` | Detection2DArray | isaac_ros_yolov8 (Container 1) → Pi5 (object awareness) |
-| `/vision/query` | String | Pi5 → moondream_node |
-| `/vision/query_result` | String | moondream_node → Pi5 |
+| `/vision/target` | String | Pi5 LangGraph → **target_node** (COCO class to hunt, "" = stop) |
+| `/vision/target_result` | String (JSON) | **target_node** → Pi5 LangGraph (`{target, found, bearing_x, rel_size, conf, stamp}`) |
 | `/voice/wake_detected` | Bool | wakeword_node → stt_node |
 | `/voice/user_input` | String | stt_node → Pi5, nav_goal_node |
 | `/voice/robot_speech` | String | Pi5 → tts_node |
@@ -161,12 +166,15 @@ Nav2 → /cmd_vel → microros_agent → WiFi → ESP32 → wheels
 | 1 | SLAM | D555 → visual_slam → odometry publishing | Blocked — D555 ETA ~1 week |
 | 2 | Nav2 | nvblox + Nav2 → robot drives to (x,y) goal | Blocked — needs Phase 1 |
 | 3 | Voice loop | wake → STT → Pi5 → TTS → spoken response | **Active** — no camera needed |
-| 4 | Object nav | YOLO + moondream → "go to the chair" works | Blocked — needs Phase 1 |
+| 3.5 | Object directions | YOLOv8n `target_node` → "go near the cup" (bearing + proximity) → LangGraph drives wheels | **Active** — mono cam, no depth/obstacle avoidance |
+| 4 | Full object nav | Phase 3.5 + SLAM/Nav2 → metric "go to the chair" | Blocked — needs Phase 1 |
 
 > Phase 3 is being developed first (USB/BT mic + speaker + Logitech camera via
-> `camera_node`, which now feeds `/camera/color/image_raw` to moondream and the Pi5
-> `look()` vision agent). Phases 1, 2, 4 resume when the D555 arrives and takes over
-> as the RGB+depth source.
+> `camera_node`, which feeds `/camera/color/image_raw` to the Pi5 `look()` vision
+> agent and to the local `target_node`). Phase 3.5 adds the YOLOv8n target_node so
+> the agent can visually servo toward a named object (bearing + relative size, no
+> metric distance) using only the mono webcam. Phases 1, 2, 4 resume when the D555
+> arrives and takes over as the RGB+depth source.
 
 ## Isaac ROS Packages
 
@@ -184,26 +192,29 @@ Nav2 → /cmd_vel → microros_agent → WiFi → ESP32 → wheels
 | Wake word | openWakeWord "hey jarvis" | ~0 (CPU) | Always on, pre-trained |
 | STT | faster-whisper small | ~0.6 GB | ~1s latency, good accuracy |
 | TTS | Kokoro | ~0.4 GB | GPU-accelerated, natural voice |
-| Detector | YOLOv8 (isaac_ros_yolov8, Container 1) | ~0.5 GB | 80 COCO classes, NITROS zero-copy |
-| VLM | Moondream2 NanoLLM MLC INT4 | ~0.8 GB | Frequent visual queries |
-| LLM + complex VLM | Mac Mini llama.cpp (Llava) | 0 on Jetson | Conversation, reasoning, rich scene description |
-| Fast VLM | Moondream2 NanoLLM MLC INT4 (Jetson) | ~0.8 GB | Frequent nav lookups: distance checks, object tracking, repeated queries |
+| Nav detector | YOLOv8n (`target_node`, Container 2 / ai_stack) | ~0.08 GB | 80 COCO classes, ~33ms/frame, gives bearing+proximity for "go near X" |
+| Rich VLM | Mac Mini / Pi5 Gemma 3n via `look()` (HTTP) | 0 on Jetson | Conversation, reasoning, "what do you see" scene description |
+| ~~Local VLM~~ | ~~Moondream2~~ | — | **DROPPED**: FP16 ~3.75 GB won't fit 8GB w/ voice, ~13min load (thrashing); INT4/INT8 incompatible with its hand-rolled F.linear; nano_llm/MLC not built for JP7.2 |
 
 ## Memory Budget (8GB Unified)
 
+Current (Phase 3 / 3.5 — voice + vision directions, no SLAM stack yet):
+
 | Workload | VRAM/RAM |
 |---|---|
-| Isaac ROS SLAM + Nav2 + nvblox + YOLOv8 | ~2.0 GB |
-| Whisper small | ~0.6 GB |
-| Kokoro TTS | ~0.4 GB |
-| Moondream2 MLC INT4 | ~0.8 GB |
+| Whisper small (whisper_cuda) | ~0.6 GB |
+| Kokoro TTS (ONNX) | ~0.4 GB |
+| YOLOv8n (`target_node`) | ~0.08 GB |
 | Ubuntu 24.04 OS + overhead | ~1.0 GB |
-| **Total** | **~4.8 GB** ✅ |
-| **Headroom** | **~3.2 GB** |
+| **Total** | **~2.1 GB** ✅ |
 
-Note: YOLO moved to Container 1 — memory budget unchanged (~0.5 GB still allocated there, now under Isaac ROS line).
-
-**Critical:** Moondream must use NanoLLM MLC INT4 — NOT HuggingFace FP16 (~2GB).
+**Critical (measured):** a local Moondream/VLM does NOT fit this 8GB board alongside
+voice — FP16 is ~3.75 GB (larger than free RAM → ~13 min load from thrashing) and
+OOMs once whisper is also resident; INT4/INT8 quant is incompatible with Moondream's
+hand-rolled `F.linear`; and `nano_llm`/MLC has no build for JP7.2/L4T r39. Rich scene
+understanding therefore lives off-board on the Pi5/Mac-Mini Gemma via `look()`; only
+YOLOv8n (object directions) runs locally. When the D555 + Isaac ROS SLAM/Nav2/nvblox
+stack lands (~2.0 GB), the budget is still comfortable.
 
 ## Storage Layout (256GB NVMe = root)
 
@@ -220,23 +231,27 @@ Note: YOLO moved to Container 1 — memory budget unchanged (~0.5 GB still alloc
 ## Pi5 ↔ Jetson
 
 - Same ROS2 Jazzy, ROS_DOMAIN_ID=0, same network
-- Pi5 subscribes: `/voice/user_input`, `/vision/detections`, `/vision/query_result`, `/visual_slam/tracking/odometry`
-- Pi5 publishes: `/voice/robot_speech`, `/vision/query`, `/goal_pose`
+- Pi5 subscribes: `/voice/user_input`, `/vision/target_result`, `/camera/color/image_raw/compressed` (for `look()`), `/visual_slam/tracking/odometry`
+- Pi5 publishes: `/voice/robot_speech`, `/vision/target`, `/goal_pose`
 - Pi5 → Mac Mini: HTTP REST to Ollama API
 - Pi5 runs micro-ROS agent — subscribes `/cmd_vel` from Jetson Nav2, forwards to ESP32 over WiFi
 
-## VLM Split — When to Use Which
+## Vision Split — When to Use Which
 
 | Query type | Route | Why |
 |---|---|---|
-| Rich description: "What room is this?", "Describe the scene" | Pi5 → Mac Mini Llava | Needs reasoning, latency OK |
-| Conversational vision: "Is the person happy?" | Pi5 → Mac Mini Llava | Complex inference |
-| Navigation lookups: "Is the chair still there?", "How far?" | Pi5 → Moondream (Jetson) | Repeated, latency-critical |
-| Object tracking during nav: frequent frame checks | Pi5 → Moondream (Jetson) | ~150ms local vs ~1s over network |
+| Rich description: "What room is this?", "Describe the scene", "Is the person happy?" | Pi5 → Mac Mini / Pi5 Gemma `look()` (HTTP, compressed frame) | Needs reasoning; latency OK; no local VLM fits 8GB |
+| "Go near the cup / chair / bottle" directions during nav | Pi5 → **target_node** (YOLOv8n, Jetson) via `/vision/target` | Repeated, latency-critical (~33 ms local); gives bearing + proximity |
+| Object presence/tracking each frame while driving | Pi5 → **target_node** | Local, no network round-trip per frame |
 
-**Rule:** Moondream for anything called repeatedly during active navigation. Mac Mini Llava for one-shot reasoning queries per conversation turn.
+**Rule:** `target_node` (YOLOv8n) for anything in the 80 COCO classes that the agent
+must localise repeatedly while driving. Gemma `look()` for one-shot open-vocabulary
+reasoning per conversation turn. There is no local VLM (see Memory Budget).
 
-Moondream stays loaded in VRAM permanently (always ready). Mac Mini VLM is on-demand over HTTP (`http://singireddys.local:8080/v1`).
+Limitations of `target_node` (mono webcam): bearing is reliable; "proximity" is a
+relative box-size proxy (`rel_size`), NOT metric distance; no obstacle avoidance.
+Targets must be COCO classes — open-vocabulary objects need Gemma `look()` or the
+future D555/SLAM stack.
 
 ## micro-ROS
 

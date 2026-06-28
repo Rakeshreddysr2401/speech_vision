@@ -230,9 +230,9 @@ Run on the host (outside container).
 # Container 1 workspace — managed by isaac-cli (already created in Step 5)
 # ~/workspaces/isaac_ros-dev/src
 
-# Container 2 workspace — AI stack (voice, VLM)
+# Container 2 workspace — AI stack (voice, vision)
 mkdir -p ~/robot/ai_ws/src/voice_pkg
-mkdir -p ~/robot/ai_ws/src/vision_pkg   # moondream_node only
+mkdir -p ~/robot/ai_ws/src/vision_pkg   # camera_node + target_node (YOLOv8n)
 mkdir -p ~/robot/ai_ws/src/bringup_pkg
 
 # Model weights — TensorRT .engine files (survive container rebuilds)
@@ -309,8 +309,8 @@ ros2 topic echo /visual_slam/tracking/odometry
 | Default Docker runtime | Must be set to `nvidia` in `/etc/docker/daemon.json` |
 | NGC image | `nvcr.io/nvidia/isaac/ros:...-arm64-jetpack` (JP7.1, ABI compatible with JP7.2) |
 | Model weights | Store at `~/robot/models/` — mounted at `/models` in container |
-| YOLOv8 runs in | Container 1 via `isaac_ros_yolov8` (NITROS zero-copy, not Container 2) |
-| VLM split | Mac Mini llama.cpp (Llava) = complex/one-shot queries; Moondream on Jetson = fast repeated nav lookups |
+| YOLOv8 runs in | Container 2 (`ai_stack`) as `vision_pkg/target_node` (YOLOv8n, ~0.08GB) for local "go near X" nav; Isaac ROS `isaac_ros_yolov8` is for the future SLAM stack in Container 1 |
+| Vision split | Mac Mini / Pi5 Gemma `look()` = open-vocab "what do you see"; YOLOv8n `target_node` on Jetson = fast repeated nav directions (bearing+proximity). No local VLM — Moondream doesn't fit 8GB |
 | Nav2 package name | `ros-jazzy-nav2-bringup` (NOT `isaac-ros-nav2` — doesn't exist); `nvblox_nav2` ships with nvblox |
 
 ## Common Errors and Fixes

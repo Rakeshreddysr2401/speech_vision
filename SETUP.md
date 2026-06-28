@@ -59,7 +59,7 @@ mkdir -p ~/workspaces/isaac_ros-dev/src
 
 # Container 2 workspace (AI stack — only custom code lives here)
 mkdir -p ~/robot/ai_ws/src/voice_pkg
-mkdir -p ~/robot/ai_ws/src/vision_pkg    # camera_node + moondream_node — YOLOv8 is in Container 1
+mkdir -p ~/robot/ai_ws/src/vision_pkg    # camera_node + target_node (YOLOv8n local nav)
 mkdir -p ~/robot/ai_ws/src/bringup_pkg
 
 # Shared
@@ -200,7 +200,9 @@ ros2 pkg list | grep nvblox   # expect nvblox_nav2 here (ships with nvblox, not 
 
 ## STEP 8 — Build Container 2: AI Stack (via jetson-containers)
 
-One combined image: ROS2 Jazzy + PyTorch + Whisper + Kokoro + openWakeWord + MLC (Moondream INT4).
+One combined image: ROS2 Jazzy + PyTorch + Whisper + Kokoro + openWakeWord. Vision
+packages (torchvision + ultralytics for YOLOv8n) are added afterward via `docker commit`
+(see STEP 20) — they are not part of the jetson-containers build.
 
 **Build time: ~60-90 min. Run once, cached forever.**
 
@@ -292,7 +294,7 @@ scp -r C:\Users\rasingired\PycharmProjects\speech_vision\ai_ws rakhi24@192.168.5
 
 Packages in `ai_ws`:
 - `voice_pkg`: wakeword_node, stt_node, tts_node
-- `vision_pkg`: camera_node (Logitech USB → /camera/color/image_raw), moondream_node (YOLOv8 moved to Container 1 via isaac_ros_yolov8)
+- `vision_pkg`: camera_node (Logitech USB → /camera/color/image_raw), target_node (YOLOv8n → /vision/target_result for "go near X" nav)
 - `bringup_pkg`: launch files (voice/vision/robot)
 
 ---
@@ -481,7 +483,8 @@ jetson-containers build \
 docker images | grep ai_stack    # verify
 ```
 
-> `mlc` is omitted here — added back when Moondream is needed (D555 phase).
+> `mlc`/Moondream are intentionally NOT built — a local VLM does not fit this 8GB board
+> (see STEP 20 and ARCHITECTURE.md). Local vision is YOLOv8n only, added via `docker commit`.
 
 ---
 
@@ -552,21 +555,35 @@ ros2 topic pub --once /voice/robot_speech std_msgs/msg/String "data: 'Hello, I a
 
 Container 2 is built once and rebuilt when new AI packages are needed. The build is layered — jetson-containers caches each package layer, so adding one new package only rebuilds from that layer onward.
 
-### When D555 arrives — add Moondream (MLC)
+### Vision (YOLOv8n) — how it was added to `ai_stack:dev-1.0.0`
+
+Local vision is YOLOv8n only (a local Moondream/VLM does not fit 8GB alongside voice —
+see ARCHITECTURE.md "Memory Budget"). Packages were installed **inside the running
+container then committed**, taking care NOT to clobber the Jetson `torch 2.12.0+cu130`
+(the Jetson pip index has no torchvision, and a naive `pip install ultralytics` would
+upgrade torch and pull a mismatched torchvision):
 
 ```bash
-cd ~/jetson-containers
-jetson-containers build \
-    ros:jazzy-ros-base \
-    pytorch \
-    faster-whisper \
-    kokoro \
-    openwakeword \
-    mlc \
-    --name ai_stack:jp7.2-vlm
+docker exec -it ai_stack bash
+source /opt/venv/bin/activate
+
+# torchvision matched to torch 2.12 — pypi.org serves the +cu130 wheel; --no-deps keeps torch pinned
+python3 -m pip install --no-deps --index-url https://pypi.org/simple/ torchvision==0.27.0
+# ultralytics + its non-torch deps, all --no-deps so torch/numpy are never touched
+python3 -m pip install --no-deps --index-url https://pypi.org/simple/ ultralytics ultralytics-thop py-cpuinfo
+python3 -m pip install --no-deps --index-url https://pypi.org/simple/ matplotlib contourpy cycler fonttools kiwisolver
+
+python3 -c "import torch,torchvision,ultralytics; print(torch.__version__, torchvision.__version__, ultralytics.__version__)"
+# → 2.12.0+cu130 0.27.0+cu130 8.4.80   (torch unchanged ✓)
+exit
+
+docker commit ai_stack ai_stack:dev-1.0.0   # then bump docker-compose.yml
 ```
 
-`mlc` adds MLC LLM runtime (~2GB download). Moondream INT4 model loads inside the container at runtime — no separate build step.
+Notes:
+- YOLOv8n needs `torch.backends.cudnn.enabled=False` (cuDNN version mismatch on Jetson — `target_node` sets this, same as `whisper_cuda`).
+- The model file lives at `~/robot/models/yolov8n.pt` (mounted to `/model_store/yolov8n.pt`).
+- `vision_pkg` does NOT use `cv_bridge` (its native lib needs OpenCV 4.6 runtime libs absent on this image) — nodes build/decode `sensor_msgs/Image` by hand.
 
 ### General pattern — adding any new package
 
