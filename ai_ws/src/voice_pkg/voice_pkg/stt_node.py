@@ -122,11 +122,18 @@ class STTNode(Node):
                 self._silence_frames = 0
 
     def _is_speech(self, chunk: np.ndarray) -> bool:
+        # WebRTC VAD only accepts 10/20/30 ms frames (320 samples = 20 ms @ 16 kHz),
+        # but our capture chunk is 1280 samples (80 ms). Evaluate EVERY 20 ms
+        # sub-frame and treat the chunk as speech if any sub-frame is speech.
+        # (Previously only the first 320 samples were checked, so 75% of each
+        # chunk was ignored — clipping word tails and leaking onset noise.)
         try:
-            return self._vad.is_speech(
-                chunk[:_VAD_FRAME_SAMPLES].astype(np.int16).tobytes(),
-                self._sample_rate,
-            )
+            pcm = chunk.astype(np.int16)
+            n = _VAD_FRAME_SAMPLES
+            for i in range(0, len(pcm) - n + 1, n):
+                if self._vad.is_speech(pcm[i:i + n].tobytes(), self._sample_rate):
+                    return True
+            return False
         except Exception:
             return False
 

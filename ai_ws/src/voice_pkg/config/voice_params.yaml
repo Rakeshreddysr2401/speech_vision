@@ -2,7 +2,9 @@ stt_node:
   ros__parameters:
     mic_preference: "auto"       # auto | usb | bluetooth | <substring match>
     silence_timeout: 0.8         # seconds of silence that finalises an utterance
-    min_speech_duration: 0.5     # minimum seconds of speech before transcribing
+    min_speech_duration: 0.3     # minimum seconds of speech before transcribing
+                                 # (kept low so short safety commands like "stop"/"no"
+                                 #  survive; VAD still gates pure noise)
     vad_aggressiveness: 3        # WebRTC VAD mode 0–3 (0=permissive, 3=aggressive)
     chunk_frames: 1280           # audio chunk size in samples (80ms at 16kHz)
 
