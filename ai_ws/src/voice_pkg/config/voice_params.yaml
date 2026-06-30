@@ -2,8 +2,10 @@ stt_node:
   ros__parameters:
     mic_preference: "auto"       # auto | usb | bluetooth | <substring match>
     silence_timeout: 0.8         # seconds of silence that finalises an utterance
-    min_speech_duration: 0.7     # minimum seconds of speech before transcribing (raised from 0.5 to reduce noise triggers)
+    min_speech_duration: 0.7     # minimum seconds of speech before transcribing
     vad_aggressiveness: 3        # WebRTC VAD mode 0–3 (0=permissive, 3=aggressive)
+    rms_threshold: 0.02          # float32 RMS energy floor — segments below this are BT noise, not speech
+                                 # real speech ~0.05–0.3; BT noise floor ~0.005–0.015; raise if hallucinations persist
     chunk_frames: 1280           # audio chunk size in samples (80ms at 16kHz)
 
     # ── Backend selection ────────────────────────────────────────────────────

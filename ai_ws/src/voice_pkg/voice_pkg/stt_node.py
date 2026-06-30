@@ -23,6 +23,7 @@ class STTNode(Node):
         self.declare_parameter('min_speech_duration', 0.5)
         self.declare_parameter('vad_aggressiveness', 2)
         self.declare_parameter('chunk_frames', 1280)
+        self.declare_parameter('rms_threshold', 0.02)
         self.declare_parameter('stt_backend', 'whisper_cuda')
         self.declare_parameter('model', 'small')
         self.declare_parameter('language', 'en')
@@ -36,6 +37,7 @@ class STTNode(Node):
         vad_mode        = self.get_parameter('vad_aggressiveness').value
         chunk_frames    = self.get_parameter('chunk_frames').value
         backend_name    = self.get_parameter('stt_backend').value
+        self._rms_threshold = float(self.get_parameter('rms_threshold').value)
 
         self._sample_rate   = 16000
         self._silence_limit = int(silence_timeout * self._sample_rate / chunk_frames)
@@ -154,7 +156,10 @@ class STTNode(Node):
             if self._silence_frames >= self._silence_limit:
                 if len(self._speech_frames) >= self._min_frames:
                     audio = np.concatenate(self._speech_frames).astype(np.float32) / 32768.0
-                    if not self._transcription_queue.full():
+                    rms = float(np.sqrt(np.mean(audio ** 2)))
+                    if rms < self._rms_threshold:
+                        self.get_logger().debug(f'Dropped low-energy segment (rms={rms:.4f})')
+                    elif not self._transcription_queue.full():
                         self._transcription_queue.put_nowait(audio)
                 self._speech_frames  = []
                 self._silence_frames = 0
