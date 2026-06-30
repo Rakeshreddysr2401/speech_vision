@@ -3,6 +3,22 @@ from abc import ABC, abstractmethod
 import numpy as np
 
 
+# Whisper hallucinates these phrases on silence/ambient noise.
+# "Thank you." is the most common; the rest are known offenders from the community.
+_HALLUCINATIONS = {
+    'thank you.', 'thank you', 'thanks.', 'thanks',
+    'thank you so much.', 'thank you very much.',
+    'you.', 'bye.', 'bye', 'goodbye.', 'goodbye',
+    'subtitles by', 'subtitles', 'captions by',
+    '.', '..', '...', '….', '!', '?',
+}
+
+
+def _is_hallucination(text: str) -> bool:
+    return text.lower().strip().rstrip('.').strip() in {h.rstrip('.').strip() for h in _HALLUCINATIONS} \
+        or text.lower().strip() in _HALLUCINATIONS
+
+
 class STTBackend(ABC):
     @abstractmethod
     def transcribe(self, audio: np.ndarray, sample_rate: int = 16000) -> str:
@@ -30,18 +46,20 @@ class FasterWhisperBackend(STTBackend):
             best_of=1,
             temperature=0.0,
             condition_on_previous_text=False,
-            no_speech_threshold=0.6,
+            no_speech_threshold=0.7,
+            log_prob_threshold=-0.7,
+            compression_ratio_threshold=1.8,
             vad_filter=True,
         )
         parts = [s.text.strip() for s in segments if s.text.strip()]
         if not parts:
             return ''
-        # Drop repeated segments — Whisper hallucination pattern
         deduped = [parts[0]]
         for p in parts[1:]:
             if p != deduped[-1]:
                 deduped.append(p)
-        return ' '.join(deduped)
+        result = ' '.join(deduped)
+        return '' if _is_hallucination(result) else result
 
 
 class WhisperCudaBackend(STTBackend):
@@ -78,10 +96,12 @@ class WhisperCudaBackend(STTBackend):
             fp16=False,
             temperature=0.0,
             condition_on_previous_text=False,
-            no_speech_threshold=0.6,
+            no_speech_threshold=0.7,
+            logprob_threshold=-0.7,
+            compression_ratio_threshold=1.8,
         )
         text = result.get('text', '').strip()
-        if not text:
+        if not text or _is_hallucination(text):
             return ''
         # Drop repeated segments — Whisper hallucination pattern
         parts = [s['text'].strip() for s in result.get('segments', []) if s['text'].strip()]
@@ -91,7 +111,8 @@ class WhisperCudaBackend(STTBackend):
         for p in parts[1:]:
             if p != deduped[-1]:
                 deduped.append(p)
-        return ' '.join(deduped)
+        result_text = ' '.join(deduped)
+        return '' if _is_hallucination(result_text) else result_text
 
 
 # ── Registry ────────────────────────────────────────────────────────────────
