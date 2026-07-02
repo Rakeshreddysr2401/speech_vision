@@ -4,8 +4,13 @@ from abc import ABC, abstractmethod
 
 class TTSBackend(ABC):
     @abstractmethod
-    def speak(self, text: str, output_device: int | None, sample_rate: int):
-        """Synthesise text and play it. Blocks until playback is complete."""
+    def speak(self, text: str, output_device: int | None, sample_rate: int,
+              on_audio_start=None):
+        """Synthesise text and play it. Blocks until playback is complete.
+
+        on_audio_start: optional zero-arg callable invoked after synthesis,
+        right before playback begins — lets callers time synthesis vs audio.
+        """
 
 
 class KokoroBackend(TTSBackend):
@@ -20,13 +25,16 @@ class KokoroBackend(TTSBackend):
         self._voice  = voice
         self._speed  = speed
 
-    def speak(self, text: str, output_device: int | None, sample_rate: int):
+    def speak(self, text: str, output_device: int | None, sample_rate: int,
+              on_audio_start=None):
         import os, subprocess
         import numpy as np
         import sounddevice as sd
         samples, sr = self._kokoro.create(
             text, voice=self._voice, speed=self._speed, lang='en-us'
         )
+        if on_audio_start is not None:
+            on_audio_start()
         if output_device is None:
             # No ALSA hw device found — play via PipeWire (handles BT speakers)
             subprocess.run(

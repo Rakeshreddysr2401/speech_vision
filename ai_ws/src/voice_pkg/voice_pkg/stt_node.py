@@ -1,5 +1,7 @@
+import json
 import queue
 import threading
+import time
 import numpy as np
 import webrtcvad
 import rclpy
@@ -42,6 +44,8 @@ class STTNode(Node):
         self._min_frames    = int(min_speech * self._sample_rate / chunk_frames)
 
         self._pub  = self.create_publisher(String, '/voice/user_input', 10)
+        self._timing_pub = self.create_publisher(String, '/diag/timing', 10)
+        self._silence_timeout = silence_timeout
         self._lock = threading.Lock()
 
         self._tts_speaking   = False
@@ -162,6 +166,11 @@ class STTNode(Node):
                 if len(self._speech_frames) >= self._min_frames:
                     audio = np.concatenate(self._speech_frames).astype(np.float32) / 32768.0
                     if not self._transcription_queue.full():
+                        # VAD confirmed end-of-utterance. The user actually stopped
+                        # talking ~silence_timeout earlier — harness subtracts it.
+                        self._emit_timing('stt_vad_end',
+                                          speech_s=round(len(audio) / self._sample_rate, 2),
+                                          silence_timeout=self._silence_timeout)
                         self._transcription_queue.put_nowait(audio)
                 self._speech_frames  = []
                 self._silence_frames = 0
@@ -180,11 +189,16 @@ class STTNode(Node):
             text = self._backend.transcribe(audio, self._sample_rate)
             if text:
                 self.get_logger().info(f'Transcribed: "{text}"')
+                self._emit_timing('stt_end', chars=len(text))
                 msg = String()
                 msg.data = text
                 self._pub.publish(msg)
         except Exception as e:
             self.get_logger().error(f'Transcription error: {e}')
+
+    def _emit_timing(self, stage: str, **fields):
+        event = {'stage': stage, 't': time.time(), **fields}
+        self._timing_pub.publish(String(data=json.dumps(event)))
 
     def destroy_node(self):
         self._capture.stop()

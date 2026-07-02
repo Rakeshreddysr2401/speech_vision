@@ -1,3 +1,4 @@
+import json
 import queue
 import threading
 import time
@@ -45,6 +46,7 @@ class TTSNode(Node):
         self._speaker_pref = speaker_pref
 
         self._speaking_pub = self.create_publisher(Bool, '/voice/tts_speaking', 10)
+        self._timing_pub   = self.create_publisher(String, '/diag/timing', 10)
         self.create_subscription(String, '/voice/robot_speech', self._speech_cb, 10)
 
         # Single worker thread + bounded queue — drops oldest if full
@@ -65,6 +67,7 @@ class TTSNode(Node):
         text = msg.data.strip()
         if not text:
             return
+        self._emit_timing('tts_receive', chars=len(text))
         if self._queue.full():
             try:
                 self._queue.get_nowait()   # drop oldest to make room
@@ -77,11 +80,16 @@ class TTSNode(Node):
             text = self._queue.get()
             self._set_speaking(True)
             self.get_logger().info(f'Speaking: "{text}"')
+            self._emit_timing('tts_synth_start', chars=len(text))
             try:
-                self._backend.speak(text, self._output_idx, self._sample_rate)
+                self._backend.speak(
+                    text, self._output_idx, self._sample_rate,
+                    on_audio_start=lambda: self._emit_timing('tts_audio_start'),
+                )
             except Exception as e:
                 self.get_logger().error(f'TTS error: {e}')
             finally:
+                self._emit_timing('tts_end')
                 time.sleep(_POST_SPEECH_SILENCE)
                 self._set_speaking(False)
                 self.get_logger().info('Done speaking')
@@ -90,6 +98,10 @@ class TTSNode(Node):
         msg = Bool()
         msg.data = state
         self._speaking_pub.publish(msg)
+
+    def _emit_timing(self, stage: str, **fields):
+        event = {'stage': stage, 't': time.time(), **fields}
+        self._timing_pub.publish(String(data=json.dumps(event)))
 
 
 def main(args=None):
