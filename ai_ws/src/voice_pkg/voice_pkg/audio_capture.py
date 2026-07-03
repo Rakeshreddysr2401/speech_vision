@@ -83,9 +83,11 @@ class PipeWireCapture:
         sample_rate: int = 16000,
         chunk_frames: int = 1280,
         maxsize: int = 40,
+        target: str | None = None,
     ):
         self._rate   = sample_rate
         self._frames = chunk_frames
+        self._target = target       # PipeWire node name, e.g. "ec_mic" (AEC source)
         self._queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=maxsize)
         self._proc: subprocess.Popen | None = None
         self._thread: threading.Thread | None = None
@@ -113,9 +115,12 @@ class PipeWireCapture:
 
     def _spawn(self):
         env = {**os.environ}
+        cmd = [_PW_CAT, '--record', '--format=s16',
+               f'--rate={self._rate}', '--channels=1']
+        if self._target:
+            cmd += ['--target', self._target]
         self._proc = subprocess.Popen(
-            [_PW_CAT, '--record', '--format=s16',
-             f'--rate={self._rate}', '--channels=1', '-'],
+            cmd + ['-'],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=env,
@@ -151,8 +156,16 @@ def make_capture(
     device_idx: int | None,
     sample_rate: int = 16000,
     chunk_frames: int = 1280,
+    pw_target: str | None = None,
 ) -> AudioCapture | PipeWireCapture:
-    """Return the right capture backend: sounddevice for USB, pw-cat for BT/None."""
+    """Return the right capture backend.
+
+    pw_target set (e.g. "ec_mic") → PipeWire capture from that node — the
+    echo-cancelled source. Otherwise: sounddevice for USB, pw-cat for BT/None.
+    """
+    if pw_target:
+        return PipeWireCapture(sample_rate=sample_rate, chunk_frames=chunk_frames,
+                               target=pw_target)
     if device_idx is None:
         return PipeWireCapture(sample_rate=sample_rate, chunk_frames=chunk_frames)
     return AudioCapture(device_idx=device_idx, sample_rate=sample_rate, chunk_frames=chunk_frames)

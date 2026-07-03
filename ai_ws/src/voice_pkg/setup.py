@@ -20,6 +20,7 @@ setup(
         'console_scripts': [
             'stt_node = voice_pkg.stt_node:main',
             'tts_node = voice_pkg.tts_node:main',
+            'music_node = voice_pkg.music_node:main',
         ],
     },
 )

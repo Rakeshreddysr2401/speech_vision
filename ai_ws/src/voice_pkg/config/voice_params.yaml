@@ -1,60 +1,73 @@
 stt_node:
   ros__parameters:
-    mic_preference: "auto"       # auto | usb | bluetooth | <substring match>
+    # ── Audio input ──────────────────────────────────────────────────────────
+    # audio_source: PipeWire capture target. "ec_mic" = the echo-cancelled
+    # source created by the host's 99-echo-cancel.conf (mic minus the robot's
+    # own TTS/music). "" = legacy device search via mic_preference.
+    audio_source: "ec_mic"
+    mic_preference: "auto"       # legacy path only (audio_source: "")
+    chunk_frames: 1280           # 80ms at 16kHz
+
+    # ── Endpointing ──────────────────────────────────────────────────────────
     silence_timeout: 0.8         # seconds of silence that finalises an utterance
     min_speech_duration: 0.3     # minimum seconds of speech before transcribing
-                                 # (kept low so short safety commands like "stop"/"no"
-                                 #  survive; VAD still gates pure noise)
-    vad_aggressiveness: 3        # WebRTC VAD mode 0–3 (0=permissive, 3=aggressive)
-    chunk_frames: 1280           # audio chunk size in samples (80ms at 16kHz)
+    vad_backend: "silero"        # silero (neural, noise-robust) | webrtc (legacy)
+    vad_aggressiveness: 3        # webrtc fallback mode 0-3
 
-    # ── Backend selection ────────────────────────────────────────────────────
-    # whisper_cuda: openai-whisper on CUDA (~0.4s, recommended)
-    # faster_whisper: ctranslate2 on CPU (~3-4s, fallback)
-    stt_backend: "whisper_cuda"
-
-    # ── Model params (used by both backends) ─────────────────────────────────
-    model: "small"               # tiny(0.15s) | base(0.4s) | small | medium
+    # ── STT backend ──────────────────────────────────────────────────────────
+    stt_backend: "whisper_cuda"  # whisper_cuda (~0.4s) | faster_whisper (CPU)
+    model: "small"
     language: "en"
-
-    # ── faster_whisper only ──────────────────────────────────────────────────
-    device: "cpu"
-    compute_type: "int8"
+    device: "cpu"                # faster_whisper only
+    compute_type: "int8"         # faster_whisper only
     download_root: "/model_store/whisper_cache"
 
-    # ── Stop-keyword spotter ("barge-in lite") ───────────────────────────────
-    # While the robot speaks, listen ONLY for short bursts (≤1.5s) and check
-    # for the keyword — "stop" halts TTS (and wheels, via the Pi5) mid-reply.
+    # ── Wake word (primary gate — audio level, BEFORE STT) ───────────────────
+    # openwakeword: neural KWS scores every 80ms chunk; only wake-opened
+    # windows are ever transcribed. Falls back to "transcript" automatically
+    # if openwakeword/models are missing.
+    wake_backend: "openwakeword"
+    # Model names in /model_store/wake (or absolute paths).
+    # Bootstrap: hey_jarvis_v0.1 (pretrained — say "hey jarvis").
+    # Once the custom model is trained (JETSON_VOICE_UPGRADE.md): ["hey_rakhi"]
+    wake_models: ["hey_jarvis_v0.1"]
+    wake_threshold: 0.5          # tune 0.3 (sensitive) – 0.7 (strict)
+    capture_window_s: 8.0        # listening window after a wake trigger
+    attention_s: 6.0             # follow-up window after the robot speaks
+                                 # (short: the neural wake word is reliable —
+                                 #  the old 15s compensated for transcript matching)
+
+    # ── Transcript gate (secondary check + alias stripping) ──────────────────
+    wake_word: true
+    wake_aliases: ["rakhi", "rakhee", "raki", "rakki", "rocky", "rocki", "roki", "jarvis"]
+
+    # ── Stop keyword (during TTS/music, on echo-cancelled audio) ─────────────
+    # Acts locally first (music + TTS halt on the Jetson, <400ms), then
+    # publishes /voice/tts_stop so the Pi5 stops the wheels too.
     stop_spotter: true
     stop_keyword: "stop"
 
-    # ── Wake-word gate ───────────────────────────────────────────────────────
-    # Only utterances addressed to the robot reach the brain: they must start
-    # (or end) with a wake alias, OR fall inside the attention window after the
-    # robot last spoke / was addressed (follow-ups need no name). Ignored
-    # utterances are logged with their transcript — tune wake_aliases from
-    # those logs (Whisper spells "Rakhi" many ways).
-    wake_word: true
-    wake_aliases: ["rakhi", "rakhee", "raki", "rakki", "rocky", "rocki", "roki"]
-    attention_s: 15.0
-
 tts_node:
   ros__parameters:
-    speaker_preference: "auto"   # auto | usb | bluetooth | <substring match>
+    speaker_preference: "auto"   # legacy ALSA path only
+    # PipeWire playback target — 'ec_speaker' routes TTS through the AEC
+    # echo-cancel sink (REQUIRED for barge-in/stop to hear over the robot).
+    audio_sink: "ec_speaker"
     sample_rate: 22050
 
-    # ── Backend selection ────────────────────────────────────────────────────
     tts_backend: "kokoro"
-
-    # ── Kokoro params ────────────────────────────────────────────────────────
     voice: "af_heart"            # af_heart | af_bella | am_adam | am_michael | ...
     speed: 1.0
 
-    # ── Streamed utterances ──────────────────────────────────────────────────
     # The brain streams a reply as sentence chunks ending with a <|eou|> marker;
-    # /voice/tts_speaking stays True (mic muted) until the marker is played out.
-    # If the brain dies mid-stream, release the mic after this many idle seconds.
+    # /voice/tts_speaking stays True until the marker is played out.
     eou_timeout: 8.0
-    # Must match stt_node's stop_keyword — used to ignore self-echo (the robot
-    # itself saying the word while speaking).
-    stop_keyword: "stop"
+    stop_keyword: "stop"         # self-echo guard (harmless with AEC, kept)
+
+music_node:
+  ros__parameters:
+    # Music must also play through the AEC sink so the mic hears the user
+    # (wake word + "stop") over the music.
+    audio_sink: "ec_speaker"
+    default_volume: 70           # 0-100
+    duck_percent: 25             # % of current volume while the robot speaks

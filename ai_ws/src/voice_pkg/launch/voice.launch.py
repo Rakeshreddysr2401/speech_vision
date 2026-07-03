@@ -24,4 +24,11 @@ def generate_launch_description():
             parameters=[config],
             output='screen',
         ),
+        Node(
+            package='voice_pkg',
+            executable='music_node',
+            name='music_node',
+            parameters=[config],
+            output='screen',
+        ),
     ])

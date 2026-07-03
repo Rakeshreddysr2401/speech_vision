@@ -1,9 +1,35 @@
+"""STT node — echo-cancelled, wake-word-gated speech input.
+
+Pipeline (see ros2_ws/JETSON_VOICE_UPGRADE.md):
+
+    ec_mic (PipeWire AEC source — the mic minus the robot's own audio)
+      → openWakeWord ("hey rakhi"/"hey jarvis" + barge-in), every chunk, ~1ms
+      → capture window (wake heard, or attention after the robot spoke)
+      → VAD endpointing (Silero neural, webrtcvad fallback)
+      → Whisper (whisper_cuda) — runs ONLY on in-window utterances
+      → wake_gate (secondary text check / alias stripping)
+      → /voice/user_input
+
+Inversion vs the old node: previously everything in the room was transcribed
+then text-filtered (Whisper misspells "Rakhi" seven ways; the 15s attention
+window forwarded all room chatter). Now audio is rejected before STT unless
+the robot was addressed.
+
+Echo cancellation makes the mic usable WHILE the robot speaks or plays music:
+  - wake word during playback = barge-in → halt TTS locally, capture the
+    utterance, forward it (the Pi5 aborts its in-flight turn).
+  - "stop" during playback → halt TTS + music locally (<400ms), then tell the
+    Pi5 (/voice/tts_stop) so wheels stop too.
+
+Every neural dependency degrades gracefully: no openwakeword → legacy
+transcript gating; no silero → webrtcvad; no ec_mic → default mic.
+"""
+
 import json
 import queue
 import threading
 import time
 import numpy as np
-import webrtcvad
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool, String
@@ -11,19 +37,16 @@ from std_msgs.msg import Bool, String
 from voice_pkg.audio_capture import make_capture
 from voice_pkg.audio_device import find_input_device, list_devices
 from voice_pkg.stt_backend import load_stt_backend
+from voice_pkg.vad_backend import load_vad
+from voice_pkg.wake_engine import WakeEngine
 from voice_pkg.wake_gate import wake_gate
 
-# WebRTC VAD requires 20ms frames: 320 samples at 16kHz
-_VAD_FRAME_SAMPLES = 320
-
-# Stop-keyword spotting while TTS is playing ("barge-in lite", no AEC).
-# The mic hears the robot's own voice, so we only transcribe SHORT isolated
-# bursts (a barked "stop!") and require a tiny transcript containing the
-# keyword — the robot's own sentences are continuous and get discarded by the
-# duration cap before ever reaching Whisper.
-_SPOT_MIN_S     = 0.2    # shorter = noise
-_SPOT_MAX_S     = 1.5    # longer = robot's own speech / real sentence
-_SPOT_SILENCE_S = 0.4    # gap that closes a spot segment
+# Stop-keyword spotting while TTS/music plays. With AEC the segments are
+# clean (the robot's own voice is subtracted), so this is a plain short-burst
+# keyword check — the old duration gymnastics guarded against self-echo.
+_SPOT_MIN_S     = 0.2
+_SPOT_MAX_S     = 2.0
+_SPOT_SILENCE_S = 0.4
 _SPOT_MAX_WORDS = 3      # "stop", "stop it", "rakhi stop"
 
 
@@ -32,9 +55,13 @@ class STTNode(Node):
         super().__init__('stt_node')
 
         self.declare_parameter('mic_preference', 'auto')
-        self.declare_parameter('silence_timeout', 1.5)
-        self.declare_parameter('min_speech_duration', 0.5)
-        self.declare_parameter('vad_aggressiveness', 2)
+        # PipeWire capture target. "ec_mic" = the echo-cancelled source
+        # (requires the host 99-echo-cancel.conf). "" = legacy device search.
+        self.declare_parameter('audio_source', 'ec_mic')
+        self.declare_parameter('silence_timeout', 0.8)
+        self.declare_parameter('min_speech_duration', 0.3)
+        self.declare_parameter('vad_backend', 'silero')          # silero | webrtc
+        self.declare_parameter('vad_aggressiveness', 3)          # webrtc fallback mode
         self.declare_parameter('chunk_frames', 1280)
         self.declare_parameter('stt_backend', 'whisper_cuda')
         self.declare_parameter('model', 'small')
@@ -42,21 +69,30 @@ class STTNode(Node):
         self.declare_parameter('device', 'cpu')
         self.declare_parameter('compute_type', 'int8')
         self.declare_parameter('download_root', '/model_store/whisper_cache')
-        # Spot the stop keyword while the robot is speaking (mic otherwise muted)
+        # Stop keyword (spot path during TTS/music; acts locally first)
         self.declare_parameter('stop_spotter', True)
         self.declare_parameter('stop_keyword', 'stop')
-        # Wake-word gate: only utterances addressed to the robot reach the brain.
-        # Aliases cover Whisper's spellings of "Rakhi"; attention_s keeps the
-        # conversation open after the robot speaks (no name needed for follow-ups).
-        self.declare_parameter('wake_word', True)
+        # ── Wake word ────────────────────────────────────────────────────
+        # openwakeword: neural KWS on raw audio (primary gate, recommended).
+        # transcript:   legacy — transcribe everything, gate by text.
+        self.declare_parameter('wake_backend', 'openwakeword')
+        # Model names in /model_store/wake (or absolute paths). Swap to
+        # ["hey_rakhi"] once the custom model is trained.
+        self.declare_parameter('wake_models', ['hey_jarvis_v0.1'])
+        self.declare_parameter('wake_threshold', 0.5)
+        # Seconds the capture window stays open after a wake trigger.
+        self.declare_parameter('capture_window_s', 8.0)
+        # Follow-up window after the robot speaks (no name needed). Short —
+        # the neural wake word is reliable, unlike transcript matching.
+        self.declare_parameter('attention_s', 6.0)
+        self.declare_parameter('wake_word', True)   # transcript-gate secondary check
         self.declare_parameter('wake_aliases',
-                               ['rakhi', 'rakhee', 'raki', 'rakki', 'rocky', 'rocki', 'roki'])
-        self.declare_parameter('attention_s', 15.0)
+                               ['rakhi', 'rakhee', 'raki', 'rakki', 'rocky', 'rocki', 'roki',
+                                'jarvis'])
 
         mic_pref        = self.get_parameter('mic_preference').value
         silence_timeout = self.get_parameter('silence_timeout').value
         min_speech      = self.get_parameter('min_speech_duration').value
-        vad_mode        = self.get_parameter('vad_aggressiveness').value
         chunk_frames    = self.get_parameter('chunk_frames').value
         backend_name    = self.get_parameter('stt_backend').value
 
@@ -70,6 +106,7 @@ class STTNode(Node):
         self._lock = threading.Lock()
 
         self._tts_speaking   = False
+        self._music_playing  = False
         self._is_recording   = False
         self._speech_frames  = []
         self._silence_frames = 0
@@ -84,17 +121,33 @@ class STTNode(Node):
         self._spot_frames:  list = []
         self._spot_silence  = 0
         self._spot_overlong = False
-        self._stop_pub = self.create_publisher(String, '/voice/tts_stop', 10)
+        self._stop_pub  = self.create_publisher(String, '/voice/tts_stop', 10)
+        self._music_pub = self.create_publisher(String, '/audio/music_cmd', 10)
 
-        # ── Wake-word gate state ────────────────────────────────────────────
+        # ── Wake engine (primary gate) + windows ────────────────────────────
+        self._wake_backend  = self.get_parameter('wake_backend').value
+        self._wake_engine   = WakeEngine(
+            list(self.get_parameter('wake_models').value),
+            self.get_parameter('wake_threshold').value,
+        ) if self._wake_backend == 'openwakeword' else None
+        self._audio_gated   = bool(self._wake_engine and self._wake_engine.available)
+        self._capture_window_s = self.get_parameter('capture_window_s').value
+        self._window_until  = 0.0   # wake-opened capture window
+        if not self._audio_gated and self._wake_backend == 'openwakeword':
+            self.get_logger().warning(
+                'openWakeWord unavailable — legacy transcript gating active')
+
+        # ── Transcript wake gate (secondary check / alias stripping) ────────
         self._wake_enabled    = self.get_parameter('wake_word').value
         self._wake_aliases    = {a.lower() for a in self.get_parameter('wake_aliases').value}
         self._attention_s     = self.get_parameter('attention_s').value
-        self._attention_until = 0.0   # epoch — follow-ups forwarded until then
+        self._attention_until = 0.0
 
         self.create_subscription(Bool, '/voice/tts_speaking', self._tts_cb, 10)
+        self.create_subscription(String, '/audio/music_state', self._music_cb, 10)
 
-        self._vad = webrtcvad.Vad(vad_mode)
+        self._vad = load_vad(self.get_parameter('vad_backend').value,
+                             self.get_parameter('vad_aggressiveness').value)
 
         self._transcription_queue = queue.Queue(maxsize=2)
         threading.Thread(target=self._transcription_worker, daemon=True).start()
@@ -114,28 +167,33 @@ class STTNode(Node):
         }.get(backend_name, {})
         self._backend = load_stt_backend(backend_name, **backend_kwargs)
 
-        self._mic_pref    = mic_pref
+        self._mic_pref     = mic_pref
         self._chunk_frames = chunk_frames
 
-        self.get_logger().info(list_devices())
-        self._device_idx, device_name = find_input_device(mic_pref)
-        self.get_logger().info(f'Mic: {device_name} (idx={self._device_idx})')
-
-        self._capture = make_capture(
-            device_idx=self._device_idx,
-            sample_rate=self._sample_rate,
-            chunk_frames=chunk_frames,
-        )
+        # ── Capture: echo-cancelled PipeWire source, or legacy device hunt ──
+        self._audio_source = self.get_parameter('audio_source').value.strip()
+        if self._audio_source:
+            self._device_idx = None
+            self._capture = make_capture(
+                device_idx=None, sample_rate=self._sample_rate,
+                chunk_frames=chunk_frames, pw_target=self._audio_source)
+            self.get_logger().info(f'Capture: PipeWire target "{self._audio_source}" (AEC)')
+        else:
+            self.get_logger().info(list_devices())
+            self._device_idx, device_name = find_input_device(mic_pref)
+            self.get_logger().info(f'Mic: {device_name} (idx={self._device_idx})')
+            self._capture = make_capture(
+                device_idx=self._device_idx, sample_rate=self._sample_rate,
+                chunk_frames=chunk_frames)
+            self.create_timer(10.0, self._check_device)
         self._capture.start()
         threading.Thread(target=self._audio_loop, daemon=True).start()
 
-        self.create_timer(10.0, self._check_device)
-
         actual_device = 'cuda' if backend_name == 'whisper_cuda' else self.get_parameter('device').value
         self.get_logger().info(
-            f'STT ready — backend={backend_name} '
-            f'model={self.get_parameter("model").value} '
-            f'device={actual_device}'
+            f'STT ready — backend={backend_name} model={self.get_parameter("model").value} '
+            f'device={actual_device} gate={"openwakeword" if self._audio_gated else "transcript"} '
+            f'vad={type(self._vad).__name__}'
         )
 
     def _check_device(self):
@@ -156,6 +214,8 @@ class STTNode(Node):
                 self._speech_frames  = []
                 self._silence_frames = 0
 
+    # ── Playback state callbacks ────────────────────────────────────────────
+
     def _tts_cb(self, msg: Bool):
         with self._lock:
             was_speaking = self._tts_speaking
@@ -168,26 +228,45 @@ class STTNode(Node):
                 # Robot just finished speaking — hold attention so the user can
                 # follow up without repeating the wake word.
                 self._attention_until = time.time() + self._attention_s
-            # Entering OR leaving speech resets the spotter
             self._spot_frames   = []
             self._spot_silence  = 0
             self._spot_overlong = False
 
-    def _is_speech(self, chunk: np.ndarray) -> bool:
-        # WebRTC VAD only accepts 10/20/30 ms frames (320 samples = 20 ms @ 16 kHz),
-        # but our capture chunk is 1280 samples (80 ms). Evaluate EVERY 20 ms
-        # sub-frame and treat the chunk as speech if any sub-frame is speech.
-        # (Previously only the first 320 samples were checked, so 75% of each
-        # chunk was ignored — clipping word tails and leaking onset noise.)
+    def _music_cb(self, msg: String):
         try:
-            pcm = chunk.astype(np.int16)
-            n = _VAD_FRAME_SAMPLES
-            for i in range(0, len(pcm) - n + 1, n):
-                if self._vad.is_speech(pcm[i:i + n].tobytes(), self._sample_rate):
-                    return True
-            return False
-        except Exception:
-            return False
+            state = json.loads(msg.data)
+        except (ValueError, TypeError):
+            return
+        with self._lock:
+            self._music_playing = bool(state.get('playing')) and not state.get('paused')
+
+    # ── Window logic ────────────────────────────────────────────────────────
+
+    def _window_open(self) -> bool:
+        now = time.time()
+        return now < self._window_until or now < self._attention_until
+
+    def _on_wake(self, model_name: str):
+        """Wake word heard (called with lock)."""
+        now = time.time()
+        self._window_until = now + self._capture_window_s
+        self._emit_timing('wake_detected', model=model_name)
+        if self._tts_speaking:
+            # Barge-in: the user is addressing the robot over its own speech —
+            # halt TTS locally (tts_node flushes) and capture the utterance.
+            # Music keeps playing: it routes through the AEC reference sink, so
+            # the canceller already subtracts it from the mic (ducking happens
+            # automatically when the robot replies).
+            self.get_logger().info(f'Barge-in: wake "{model_name}" during TTS')
+            self._stop_pub.publish(String(data=f'[wake:{model_name}]'))
+        else:
+            self.get_logger().info(f'Wake: "{model_name}" — listening')
+        # Fresh utterance from here.
+        self._is_recording   = False
+        self._speech_frames  = []
+        self._silence_frames = 0
+
+    # ── Audio loop ──────────────────────────────────────────────────────────
 
     def _audio_loop(self):
         while rclpy.ok():
@@ -195,20 +274,31 @@ class STTNode(Node):
             if chunk is None:
                 continue
             with self._lock:
-                if self._tts_speaking:
+                # 1. Wake engine sees EVERY chunk (stateful streaming model).
+                if self._audio_gated:
+                    hit = self._wake_engine.detect(chunk)
+                    if hit:
+                        self._on_wake(hit)
+                        continue   # the wake chunk itself isn't utterance audio
+
+                playback_active = self._tts_speaking or self._music_playing
+
+                # 2. During playback with NO open window: only the stop
+                #    spotter listens (AEC gives it clean audio).
+                if playback_active and not self._window_open():
                     if self._stop_spotter:
                         self._spot(chunk)
                     continue
+
+                # 3. Normal capture — inside a window (audio-gated mode) or
+                #    always (legacy transcript mode).
+                if self._audio_gated and not self._window_open():
+                    continue   # not addressed — never reaches Whisper
                 self._process(chunk)
 
     def _spot(self, chunk: np.ndarray):
-        """Called (with lock) for every chunk while TTS is speaking.
-
-        Collect short isolated speech bursts and queue them for keyword-only
-        transcription. Continuous speech longer than _SPOT_MAX_S is the robot's
-        own voice (or a real sentence we can't act on) — discard it and wait
-        for a silence gap before re-arming."""
-        if self._is_speech(chunk):
+        """Short-burst keyword check while the robot plays audio (lock held)."""
+        if self._vad.is_speech(chunk):
             if self._spot_overlong:
                 return
             self._spot_frames.append(chunk.copy())
@@ -217,9 +307,8 @@ class STTNode(Node):
                 self._spot_frames  = []
                 self._spot_overlong = True
             return
-        # silence chunk
         if self._spot_overlong:
-            self._spot_overlong = False   # gap over — re-arm
+            self._spot_overlong = False
             return
         if not self._spot_frames:
             return
@@ -232,7 +321,7 @@ class STTNode(Node):
                 self._transcription_queue.put_nowait(('spot', audio))
 
     def _process(self, chunk: np.ndarray):
-        if self._is_speech(chunk):
+        if self._vad.is_speech(chunk):
             if not self._is_recording:
                 self._is_recording   = True
                 self._speech_frames  = []
@@ -246,8 +335,6 @@ class STTNode(Node):
                 if len(self._speech_frames) >= self._min_frames:
                     audio = np.concatenate(self._speech_frames).astype(np.float32) / 32768.0
                     if not self._transcription_queue.full():
-                        # VAD confirmed end-of-utterance. The user actually stopped
-                        # talking ~silence_timeout earlier — harness subtracts it.
                         self._emit_timing('stt_vad_end',
                                           speech_s=round(len(audio) / self._sample_rate, 2),
                                           silence_timeout=self._silence_timeout)
@@ -255,6 +342,8 @@ class STTNode(Node):
                 self._speech_frames  = []
                 self._silence_frames = 0
                 self._is_recording   = False
+
+    # ── Transcription worker ────────────────────────────────────────────────
 
     def _transcription_worker(self):
         while True:
@@ -268,7 +357,7 @@ class STTNode(Node):
                 self._transcribe(audio)
 
     def _spot_transcribe(self, audio: np.ndarray):
-        """Keyword check for a short burst heard during TTS playback."""
+        """Keyword check for a short burst heard during playback."""
         try:
             text = self._backend.transcribe(audio, self._sample_rate) or ''
         except Exception as e:
@@ -279,6 +368,9 @@ class STTNode(Node):
         if words and self._stop_keyword in words and len(words) <= _SPOT_MAX_WORDS:
             self.get_logger().info(f'Stop keyword spotted: "{text}"')
             self._emit_timing('stop_spotted')
+            # Act locally FIRST (instant), then tell the Pi5 (wheels sweep).
+            self._music_pub.publish(String(data=json.dumps(
+                {'action': 'stop', 't': time.time(), 'reason': 'stop_keyword'})))
             self._stop_pub.publish(String(data=text))
         elif words:
             self.get_logger().debug(f'Spot segment ignored: "{text}"')
@@ -288,16 +380,19 @@ class STTNode(Node):
             text = self._backend.transcribe(audio, self._sample_rate)
             if not text:
                 return
-            if self._wake_enabled:
+            if self._audio_gated:
+                # The wake model already decided we're addressed — the text
+                # gate only strips the leading/trailing name if present.
+                _, out = wake_gate(text, self._wake_aliases, attention_active=True)
+                text = out
+                self._attention_until = time.time() + self._attention_s
+            elif self._wake_enabled:
                 attention = time.time() < self._attention_until
                 forward, out = wake_gate(text, self._wake_aliases, attention)
                 if not forward:
-                    # Room chatter not addressed to the robot. Log the text so
-                    # missed wake words show up (tune wake_aliases from these).
                     self.get_logger().info(f'Not addressed to me — ignored: "{text}"')
                     self._emit_timing('wake_ignored', chars=len(text))
                     return
-                # Addressed (or in-conversation) — keep the window open.
                 self._attention_until = time.time() + self._attention_s
                 text = out
             self.get_logger().info(f'Transcribed: "{text}"')
@@ -315,7 +410,6 @@ class STTNode(Node):
     def destroy_node(self):
         self._capture.stop()
         super().destroy_node()
-
 
 
 def main(args=None):

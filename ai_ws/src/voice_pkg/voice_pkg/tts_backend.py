@@ -25,11 +25,15 @@ class KokoroBackend(TTSBackend):
     ONNX_MODEL  = '/opt/kokoro-onnx/examples/kokoro-v1.0.onnx'
     VOICES_FILE = '/opt/kokoro-onnx/examples/voices-v1.0.bin'
 
-    def __init__(self, voice: str = 'af_heart', speed: float = 1.0):
+    def __init__(self, voice: str = 'af_heart', speed: float = 1.0,
+                 pw_target: str | None = 'ec_speaker'):
         from kokoro_onnx import Kokoro
         self._kokoro = Kokoro(self.ONNX_MODEL, self.VOICES_FILE)
         self._voice  = voice
         self._speed  = speed
+        # AEC: ALL robot audio must play through the echo-cancel sink so the
+        # canceller can subtract it from the mic. ''/None = default sink.
+        self._pw_target = pw_target
         self._proc        = None    # active pw-cat process (PipeWire path)
         self._interrupted = False   # set by stop(), checked around playback
 
@@ -46,11 +50,15 @@ class KokoroBackend(TTSBackend):
             return  # stopped while synthesising — skip playback
         if on_audio_start is not None:
             on_audio_start()
-        if output_device is None:
-            # No ALSA hw device found — play via PipeWire (handles BT speakers)
+        if output_device is None or self._pw_target:
+            # PipeWire playback (default): routes through the echo-cancel sink
+            # when pw_target is set, so TTS is part of the AEC reference.
+            cmd = ['/usr/local/bin/pw-cat', '--playback', '--format=f32',
+                   f'--rate={sr}', '--channels=1']
+            if self._pw_target:
+                cmd += ['--target', self._pw_target]
             proc = subprocess.Popen(
-                ['/usr/local/bin/pw-cat', '--playback', '--format=f32',
-                 f'--rate={sr}', '--channels=1', '-'],
+                cmd + ['-'],
                 stdin=subprocess.PIPE,
                 env={**os.environ},
             )

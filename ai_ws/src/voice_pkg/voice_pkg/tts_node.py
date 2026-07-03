@@ -24,6 +24,9 @@ class TTSNode(Node):
         super().__init__('tts_node')
 
         self.declare_parameter('speaker_preference', 'auto')
+        # PipeWire playback target — 'ec_speaker' routes TTS through the AEC
+        # echo-cancel sink (host 99-echo-cancel.conf). '' = default sink.
+        self.declare_parameter('audio_sink', 'ec_speaker')
         self.declare_parameter('sample_rate', 22050)
         self.declare_parameter('tts_backend', 'kokoro')
         self.declare_parameter('voice', 'af_heart')
@@ -43,6 +46,7 @@ class TTSNode(Node):
             'kokoro': dict(
                 voice = self.get_parameter('voice').value,
                 speed = self.get_parameter('speed').value,
+                pw_target = self.get_parameter('audio_sink').value or None,
             ),
         }.get(backend_name, {})
 
