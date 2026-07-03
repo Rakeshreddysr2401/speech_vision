@@ -45,7 +45,10 @@ services:
       - ${HOME}/robot/data:/data
       - ${HOME}/robot/models:/model_store
       # PipeWire socket — BT audio from host session; PIPEWIRE_REMOTE must point here
-      - /run/user/2002/pipewire-0:/run/user/2002/pipewire-0
+      # Long-form bind required: short-form fails when PipeWire is running (socket != dir)
+      - type: bind
+        source: /run/user/2002/pipewire-0
+        target: /run/user/2002/pipewire-0
       # Bind-mount /dev/snd as a directory so USB audio devices hot-plugged after
       # container start are visible (devices: takes a static snapshot at start time)
       - /dev/snd:/dev/snd
