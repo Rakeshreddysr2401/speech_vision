@@ -65,10 +65,18 @@ class AudioCapture:
     def _cb(self, indata: np.ndarray, frames: int, time, status):
         if status:
             _log.debug('Audio stream status: %s', status)
+        chunk = indata[:, 0].copy()
         try:
-            self._queue.put_nowait(indata[:, 0].copy())
+            self._queue.put_nowait(chunk)
         except queue.Full:
-            pass  # drop oldest-ish chunk rather than blocking the audio thread
+            # Drop the OLDEST chunk, keep the new one — a stalled consumer must
+            # not freeze the audio picture at the moment it stalled (never
+            # block the audio thread either way).
+            try:
+                self._queue.get_nowait()
+                self._queue.put_nowait(chunk)
+            except (queue.Empty, queue.Full):
+                pass
 
 
 class PipeWireCapture:
@@ -91,6 +99,7 @@ class PipeWireCapture:
         self._queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=maxsize)
         self._proc: subprocess.Popen | None = None
         self._thread: threading.Thread | None = None
+        self._stderr_tail = ''
 
     def start(self):
         self._stopped = False
@@ -127,7 +136,23 @@ class PipeWireCapture:
             # Prevent pw-cat from dying on SIGPIPE when parent is a ROS node
             preexec_fn=lambda: signal.signal(signal.SIGPIPE, signal.SIG_DFL),
         )
+        # Drain stderr continuously: an undrained PIPE fills its 64KB buffer
+        # if pw-cat gets chatty (device warnings over days of uptime) and then
+        # BLOCKS pw-cat — which silently stalls the mic. Keep the last line
+        # for the crash log instead of reading it post-mortem.
+        self._stderr_tail = ''
+        threading.Thread(target=self._drain_stderr, args=(self._proc,),
+                         daemon=True).start()
         _log.info('PipeWire capture started (pid=%d)', self._proc.pid)
+
+    def _drain_stderr(self, proc: subprocess.Popen):
+        try:
+            for raw in proc.stderr:
+                line = raw.decode(errors='replace').strip()
+                if line:
+                    self._stderr_tail = line
+        except (OSError, ValueError):
+            pass  # process died / pipe closed — the run loop handles restart
 
     def _run_loop(self):
         """Outer loop: spawn pw-cat, read chunks, restart on crash."""
@@ -144,7 +169,7 @@ class PipeWireCapture:
                 except queue.Full:
                     pass
             if self._proc.poll() is not None and not self._stopped:
-                err = self._proc.stderr.read().decode(errors='replace').strip()
+                err = self._stderr_tail
                 _log.warning('pw-cat exited (rc=%d)%s', self._proc.returncode,
                              f': {err}' if err else '')
                 self._proc = None

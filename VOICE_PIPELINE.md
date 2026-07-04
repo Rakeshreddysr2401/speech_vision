@@ -58,7 +58,7 @@ boAt mic ──► PipeWire webrtc echo-cancel ──► ec_mic (virtual source:
 | `/voice/tts_speaking` | →Pi5 | True from first chunk until EOU played (also ducks music) |
 | `/voice/tts_stop` | →Pi5 | stop keyword / `[wake:...]` barge-in marker |
 | `/audio/music_cmd` | ←Pi5 | `{"action": play\|pause\|resume\|stop\|volume, "query"/"level", "t"}` |
-| `/audio/music_state` | →Pi5 | `{"playing","paused","title","volume","error","stamp"}` |
+| `/audio/music_state` | →Pi5 | `{"playing","paused","title","volume","error","stamp","cmd_t"}` — `cmd_t` echoes the play cmd's `t`; Pi5 confirms playback on it as an opaque token (never clock-compares `stamp`) |
 
 ## Operating it
 

@@ -8,7 +8,10 @@ Contract with the Pi5 brain (langrobo_core.tools.music — already deployed):
       {"action": "volume", "level": 0-100, "t": ...}
   publish  /audio/music_state (String, JSON) — on every change + 1Hz while playing
       {"playing": bool, "paused": bool, "title": str, "volume": int,
-       "error": str|null, "stamp": <epoch>}   # stamp = wall clock (Pi5 waits on it)
+       "error": str|null, "stamp": <epoch>,
+       "cmd_t": <play cmd's t>}   # cmd_t echoes the play command's `t` — the
+                                  # Pi5 matches on it as an opaque token (no
+                                  # cross-machine clock comparison)
 
 Engine: yt-dlp resolves the query to a direct audio URL; ffmpeg decodes it to
 raw PCM; this node applies volume/ducking in numpy and pipes the samples to
@@ -84,7 +87,8 @@ class MusicNode(Node):
             return
         self.get_logger().info(f'music_cmd: {cmd}')
         if action == 'play':
-            threading.Thread(target=self._play, args=(cmd.get('query', ''),),
+            threading.Thread(target=self._play,
+                             args=(cmd.get('query', ''), cmd.get('t')),
                              daemon=True).start()
         elif action == 'stop':
             self._stop()
@@ -100,8 +104,9 @@ class MusicNode(Node):
             self._publish_state(volume=self._volume)
 
     def _tts_stop_cb(self, msg: String):
-        """Spoken 'stop' (or wake barge-in) — halt music unless it was a
-        wake-word barge-in, which pauses via its own music_cmd instead."""
+        """Spoken 'stop' halts music. A wake-word barge-in ('[wake:…]') does
+        NOT — by design music keeps playing through the AEC sink while the
+        user talks to the robot (ducking kicks in when the robot replies)."""
         if msg.data.startswith('[wake:'):
             return
         if self._state['playing']:
@@ -127,10 +132,16 @@ class MusicNode(Node):
             info = entries[0]
         return info['url'], info.get('title', query)
 
-    def _play(self, query: str):
+    def _play(self, query: str, cmd_t: float | None = None):
+        # cmd_t (the command's `t`) is echoed back in every state we publish
+        # for THIS request — the Pi5's play_music matches on it, so a 1Hz
+        # heartbeat of the previous song can never confirm a new request and
+        # no cross-machine clock comparison is needed (Pi5↔Jetson drift ~1.5s).
         if not query.strip():
-            self._publish_state(error='empty query')
+            self._publish_state(error='empty query', cmd_t=cmd_t)
             return
+        # Stop the current song WITHOUT publishing, but update internal state so
+        # the old song's 1Hz heartbeat pauses while the new one resolves.
         self._stop(publish=False)
         with self._lock:
             self._player_gen += 1
@@ -139,7 +150,8 @@ class MusicNode(Node):
             url, title = self._resolve(query)
         except Exception as e:
             self.get_logger().error(f'resolve failed: {e}')
-            self._publish_state(playing=False, title='', error=str(e)[:200])
+            self._publish_state(playing=False, title='', error=str(e)[:200],
+                                cmd_t=cmd_t)
             return
         with self._lock:
             if gen != self._player_gen:
@@ -156,7 +168,8 @@ class MusicNode(Node):
             pwcat = subprocess.Popen(pw_cmd + ['-'], stdin=subprocess.PIPE)
             self._ffmpeg, self._pwcat = ffmpeg, pwcat
         self._paused.clear()
-        self._publish_state(playing=True, paused=False, title=title, error=None)
+        self._publish_state(playing=True, paused=False, title=title, error=None,
+                            cmd_t=cmd_t)
         self.get_logger().info(f'Playing: {title}')
         threading.Thread(target=self._pump, args=(gen, ffmpeg, pwcat),
                          daemon=True).start()
@@ -176,9 +189,10 @@ class MusicNode(Node):
                 if not data:
                     break
                 target = self._effective_gain()
-                # short linear ramp toward target gain — no zipper noise on duck
+                # short ramp toward target gain — no zipper noise on duck
+                # (float steps: int() truncated 1.5 chunks to 1 = instant jump)
                 if abs(target - gain) > 0.01:
-                    steps = max(1, int(_DUCK_RAMP_S * _RATE / _CHUNK))
+                    steps = max(1.0, _DUCK_RAMP_S * _RATE / _CHUNK)
                     gain += (target - gain) / steps
                 else:
                     gain = target
@@ -206,6 +220,10 @@ class MusicNode(Node):
         self._cleanup_procs()
         if publish:
             self._publish_state(playing=False, paused=False, title='')
+        else:
+            # Song switch: keep the change internal so the old song's 1Hz
+            # heartbeat stops without broadcasting a misleading "stopped".
+            self._state.update(playing=False, paused=False, title='')
 
     def _cleanup_procs(self):
         for proc in (self._ffmpeg, self._pwcat):

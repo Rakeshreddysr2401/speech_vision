@@ -73,6 +73,7 @@ class TTSNode(Node):
         # ── Stop / stream bookkeeping (spin thread writes, worker reads) ─────
         self._stream_open       = False   # brain's EOU for the current utterance not yet received
         self._discard_until_eou = False   # stop requested — drop in-flight chunks
+        self._discard_since     = 0.0     # monotonic time discard was armed
         self._current_text      = ''      # chunk the worker is playing right now
 
         # Single worker thread + ordered chunk queue. Sized for a full streamed
@@ -96,6 +97,16 @@ class TTSNode(Node):
         text = msg.data.strip()
         if not text:
             return
+        if (self._discard_until_eou
+                and time.monotonic() - self._discard_since > self._eou_timeout):
+            # The brain never closed the stopped utterance (it died or was
+            # restarted mid-stream). Without this expiry the flag would latch
+            # and silently swallow the ENTIRE next utterance — the worker's
+            # own watchdog can't clear it because it only runs while speaking.
+            self.get_logger().warning(
+                'Discard flag expired without EOU — accepting new speech')
+            self._discard_until_eou = False
+            self._stream_open = False
         if self._discard_until_eou:
             # Stop was requested mid-stream: swallow the rest of this utterance.
             if text == _EOU_MARKER:
@@ -117,10 +128,14 @@ class TTSNode(Node):
             self.get_logger().error(f'TTS queue full — dropped: "{text[:60]}"')
 
     def _stop_cb(self, msg: String):
-        """Stop keyword heard while speaking — halt playback and flush."""
+        """Stop keyword (or wake barge-in) heard while speaking — halt and flush."""
         if not self._speaking:
             return
-        if self._stop_keyword in self._current_text.lower():
+        # Wake barge-in ("[wake:…]") comes from the neural wake model, not the
+        # stop spotter — self-echo is impossible, so it must NOT be dropped
+        # just because the robot's current sentence happens to contain "stop".
+        is_wake = msg.data.startswith('[wake:')
+        if not is_wake and self._stop_keyword in self._current_text.lower():
             # The robot itself is saying the keyword right now — likely self-echo.
             self.get_logger().info(f'Stop ignored (self-echo guard): "{msg.data}"')
             return
@@ -128,6 +143,7 @@ class TTSNode(Node):
         self._emit_timing('tts_stopped')
         # If the brain is still streaming this utterance, swallow what's coming.
         self._discard_until_eou = self._stream_open
+        self._discard_since = time.monotonic()
         while True:                       # flush queued chunks + any marker
             try:
                 self._queue.get_nowait()

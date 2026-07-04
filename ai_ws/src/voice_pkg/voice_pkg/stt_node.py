@@ -107,6 +107,7 @@ class STTNode(Node):
 
         self._tts_speaking   = False
         self._music_playing  = False
+        self._music_state_at = 0.0    # monotonic time of last music_state msg
         self._is_recording   = False
         self._speech_frames  = []
         self._silence_frames = 0
@@ -239,6 +240,13 @@ class STTNode(Node):
             return
         with self._lock:
             self._music_playing = bool(state.get('playing')) and not state.get('paused')
+            self._music_state_at = time.monotonic()
+
+    def _music_active(self) -> bool:
+        """music_node heartbeats at 1Hz while playing. If it dies mid-song the
+        last state says "playing" forever — without this expiry the mic would
+        stay in stop-spotter-only gating until reboot. (Lock held by caller.)"""
+        return self._music_playing and time.monotonic() - self._music_state_at < 3.0
 
     # ── Window logic ────────────────────────────────────────────────────────
 
@@ -281,7 +289,7 @@ class STTNode(Node):
                         self._on_wake(hit)
                         continue   # the wake chunk itself isn't utterance audio
 
-                playback_active = self._tts_speaking or self._music_playing
+                playback_active = self._tts_speaking or self._music_active()
 
                 # 2. During playback with NO open window: only the stop
                 #    spotter listens (AEC gives it clean audio).
