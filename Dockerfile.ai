@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# ai_stack:dev-1.0.0 — Container 2 image for Jetson Orin Nano 8GB (JetPack 7.2)
+# ai_stack:dev-1.0.4 — Container 2 image for Jetson Orin Nano 8GB (JetPack 7.2)
 #
 # STATUS: Built via docker commit (not docker build).
 #         Base image ai_stack:final was built from jetson-containers; subsequent
@@ -55,13 +55,26 @@
 #     Rich scene description stays on the Pi5/Mac-Mini Gemma look() tool.
 #     transformers restored to 5.12.1 (the Moondream test had downgraded it to 4.46.3).
 #
-# KEY RUNTIME FACTS:
+# THEN added on top (applied inside container, committed as dev-1.0.4):
+#   - VOICE PIPELINE UPGRADE (Alexa-style full-duplex; see VOICE_PIPELINE.md):
+#       - openwakeword==0.6.0 + scikit-learn 1.9.0 (neural wake word, ONNX inference)
+#       - yt-dlp==2026.6.9  (music_node: resolve + stream audio via ffmpeg → pw-cat)
+#       - silero_vad==6.2.1  (installed but NOT imported — onnx file used directly;
+#         do NOT import the package: it pulls torchaudio which has a CUDA mismatch)
+#     New voice_pkg nodes: wake_engine.py, vad_backend.py, wake_gate.py, music_node.py
+#     Wake models in /model_store/wake (bind-mounted, not baked in):
+#       melspectrogram.onnx, embedding_model.onnx, hey_jarvis_v0.1.onnx, silero_vad.onnx
+#
+# KEY RUNTIME FACTS (dev-1.0.4):
 #   - STT: openai-whisper on CUDA (whisper_cuda backend), small model, ~1s/utterance
 #     ctranslate2 (faster-whisper) also available as CPU/int8 fallback
-#   - TTS: Kokoro (ONNX, CPU) — fast enough for real-time synthesis
-#   - Always-listening with WebRTC VAD (mode 3) — no wake word required
-#   - PyTorch CUDA available; Orin Nano CC 8.7 triggers a compatibility warning — harmless
-#   - cuDNN disabled in WhisperCudaBackend to work around version mismatch on JetPack 7.2
+#   - TTS: Kokoro (ONNX, CPU) → ec_speaker (AEC sink, required for barge-in/stop)
+#   - WAKE WORD: openWakeWord ONNX ("hey jarvis" bootstrap; swap to "hey_rakhi" once trained)
+#   - VAD: Silero ONNX via onnxruntime (NO torchaudio); webrtcvad fallback
+#   - MUSIC: yt-dlp + ffmpeg → pw-cat → ec_speaker (ducks during TTS, instant stop)
+#   - VISION: YOLOv8n bearing/size for nav; cuDNN disabled (version mismatch on JP7.2)
+#   - PyTorch CUDA available; Orin Nano CC 8.7 triggers a compat warning — harmless
+#
 #
 # TO ADD NEW PACKAGES (do not rebuild from scratch):
 #   1. Enter the running container:
@@ -89,7 +102,7 @@ FROM ${AI_BASE}
 
 # VISION: YOLOv8n object detection for nav (torchvision 0.27.0+cu130 + ultralytics).
 # NOTE: local Moondream VLM was evaluated and DROPPED — does not fit 8GB alongside
-#       voice (see dev-1.0.0 changelog above). Rich VLM lives on the Pi5 Gemma look().
+#       voice (see dev-1.0.4 changelog above). Rich VLM lives on the Pi5 Gemma look().
 
 WORKDIR /workspaces/ai_ws
 
