@@ -39,7 +39,7 @@ stt_node:
 
     # ── Transcript gate (secondary check + alias stripping) ──────────────────
     wake_word: true
-    wake_aliases: ["rakhi", "rakhee", "raki", "rakki", "rocky", "rocki", "roki", "jarvis"]
+    wake_aliases: ["rakhi", "rakhee", "raki", "rakki", "rocky", "rocki", "roki", "jarvis", "chotu", "chottu", "choto", "shotu"]
 
     # ── Stop keyword (during TTS/music, on echo-cancelled audio) ─────────────
     # Acts locally first (music + TTS halt on the Jetson, <400ms), then

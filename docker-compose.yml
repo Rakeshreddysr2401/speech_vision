@@ -6,6 +6,12 @@ services:
     container_name: isaac_ros
     runtime: nvidia
     network_mode: host
+    # WiFi AP blocks cross-client mDNS (the dead eth link used to carry
+    # it) — pin the Pi5 meeting point by IP. Containers have their own
+    # /etc/hosts, so the host-side pin alone is not enough. Remove both
+    # pins when the eth link is fixed or AP isolation is disabled.
+    extra_hosts:
+      - "rakhi24-desktop.local:192.168.1.16"
     privileged: true
     stdin_open: true
     tty: true
@@ -31,6 +37,12 @@ services:
     container_name: ai_stack
     runtime: nvidia
     network_mode: host
+    # WiFi AP blocks cross-client mDNS (the dead eth link used to carry
+    # it) — pin the Pi5 meeting point by IP. Containers have their own
+    # /etc/hosts, so the host-side pin alone is not enough. Remove both
+    # pins when the eth link is fixed or AP isolation is disabled.
+    extra_hosts:
+      - "rakhi24-desktop.local:192.168.1.16"
     privileged: true
     stdin_open: true
     tty: true
