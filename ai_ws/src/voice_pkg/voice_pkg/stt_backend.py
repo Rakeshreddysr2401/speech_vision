@@ -9,18 +9,44 @@ class STTBackend(ABC):
         """Transcribe a float32 mono PCM array. Return plain text."""
 
 
+# Segment-level hallucination filter (both backends). Whisper invents text on
+# noise/silence; those segments arrive with high no-speech probability AND low
+# average log-probability — real speech almost never has both. Filtering per
+# SEGMENT (not per utterance) keeps the genuine part of a mixed result.
+_NO_SPEECH_MAX = 0.6
+_AVG_LOGPROB_MIN = -1.0
+
+
+def _keep_segment(no_speech_prob: float | None, avg_logprob: float | None) -> bool:
+    if no_speech_prob is None or avg_logprob is None:
+        return True
+    return not (no_speech_prob > _NO_SPEECH_MAX and avg_logprob < _AVG_LOGPROB_MIN)
+
+
+def _dedupe(parts: list[str]) -> list[str]:
+    """Drop consecutive repeats — the other classic Whisper hallucination."""
+    if not parts:
+        return parts
+    deduped = [parts[0]]
+    for p in parts[1:]:
+        if p != deduped[-1]:
+            deduped.append(p)
+    return deduped
+
+
 class FasterWhisperBackend(STTBackend):
     """faster-whisper — default backend, runs on CPU (ctranslate2 in this image lacks CUDA)."""
 
     def __init__(self, model: str = 'small', device: str = 'cpu',
                  compute_type: str = 'int8', language: str = 'en',
-                 download_root: str | None = None):
+                 download_root: str | None = None, initial_prompt: str = ''):
         from faster_whisper import WhisperModel
         self._model = WhisperModel(
             model, device=device, compute_type=compute_type,
             download_root=download_root or None,
         )
         self._language = language
+        self._initial_prompt = initial_prompt or None
 
     def transcribe(self, audio: np.ndarray, sample_rate: int = 16000) -> str:
         segments, _ = self._model.transcribe(
@@ -30,18 +56,17 @@ class FasterWhisperBackend(STTBackend):
             best_of=1,
             temperature=0.0,
             condition_on_previous_text=False,
-            no_speech_threshold=0.6,
+            no_speech_threshold=_NO_SPEECH_MAX,
+            # Household vocabulary primer — Whisper spells rare names (Rakhi,
+            # Chotu, Swiggy) correctly when they appear in the prompt.
+            initial_prompt=self._initial_prompt,
             vad_filter=True,
         )
-        parts = [s.text.strip() for s in segments if s.text.strip()]
-        if not parts:
-            return ''
-        # Drop repeated segments — Whisper hallucination pattern
-        deduped = [parts[0]]
-        for p in parts[1:]:
-            if p != deduped[-1]:
-                deduped.append(p)
-        return ' '.join(deduped)
+        parts = [s.text.strip() for s in segments
+                 if s.text.strip() and _keep_segment(
+                     getattr(s, 'no_speech_prob', None),
+                     getattr(s, 'avg_logprob', None))]
+        return ' '.join(_dedupe(parts))
 
 
 class WhisperCudaBackend(STTBackend):
@@ -51,7 +76,8 @@ class WhisperCudaBackend(STTBackend):
     Note: cuDNN is disabled to work around version mismatch on Jetson (harmless for inference).
     """
 
-    def __init__(self, model: str = 'base', language: str = 'en'):
+    def __init__(self, model: str = 'base', language: str = 'en',
+                 initial_prompt: str = ''):
         import sys, types as _types
         # Stub numba before whisper imports it — numba breaks on this Jetson image
         # due to coverage.types API mismatch. Whisper only needs numba for optional
@@ -70,6 +96,7 @@ class WhisperCudaBackend(STTBackend):
         import whisper
         self._model    = whisper.load_model(model, device='cuda')
         self._language = language
+        self._initial_prompt = initial_prompt or None
 
     def transcribe(self, audio: np.ndarray, sample_rate: int = 16000) -> str:
         result = self._model.transcribe(
@@ -78,20 +105,17 @@ class WhisperCudaBackend(STTBackend):
             fp16=False,
             temperature=0.0,
             condition_on_previous_text=False,
-            no_speech_threshold=0.6,
+            no_speech_threshold=_NO_SPEECH_MAX,
+            # Household vocabulary primer — see FasterWhisperBackend.
+            initial_prompt=self._initial_prompt,
         )
-        text = result.get('text', '').strip()
-        if not text:
-            return ''
-        # Drop repeated segments — Whisper hallucination pattern
-        parts = [s['text'].strip() for s in result.get('segments', []) if s['text'].strip()]
-        if not parts:
-            return text
-        deduped = [parts[0]]
-        for p in parts[1:]:
-            if p != deduped[-1]:
-                deduped.append(p)
-        return ' '.join(deduped)
+        segments = result.get('segments', [])
+        if not segments:
+            return result.get('text', '').strip()
+        parts = [s['text'].strip() for s in segments
+                 if s['text'].strip() and _keep_segment(
+                     s.get('no_speech_prob'), s.get('avg_logprob'))]
+        return ' '.join(_dedupe(parts))
 
 
 # ── Registry ────────────────────────────────────────────────────────────────

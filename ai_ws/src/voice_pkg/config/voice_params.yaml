@@ -21,6 +21,9 @@ stt_node:
     device: "cpu"                # faster_whisper only
     compute_type: "int8"         # faster_whisper only
     download_root: "/model_store/whisper_cache"
+    # Vocabulary primer: Whisper spells names it has seen in the prompt.
+    # A short natural sentence; it is NOT transcribed into the output.
+    initial_prompt: "Talking to Rakhi, the home robot, also called Chotu or Jarvis, about reminders, Swiggy orders, Telegram messages to Rakesh or Mom, music and the camera."
 
     # ── Wake word (primary gate — audio level, BEFORE STT) ───────────────────
     # openwakeword: neural KWS scores every 80ms chunk; only wake-opened

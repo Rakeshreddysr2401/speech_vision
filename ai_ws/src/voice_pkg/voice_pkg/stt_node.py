@@ -69,6 +69,8 @@ class STTNode(Node):
         self.declare_parameter('device', 'cpu')
         self.declare_parameter('compute_type', 'int8')
         self.declare_parameter('download_root', '/model_store/whisper_cache')
+        # Household vocabulary primer for Whisper (rare-name spelling).
+        self.declare_parameter('initial_prompt', '')
         # Stop keyword (spot path during TTS/music; acts locally first)
         self.declare_parameter('stop_spotter', True)
         self.declare_parameter('stop_keyword', 'stop')
@@ -160,10 +162,12 @@ class STTNode(Node):
                 compute_type  = self.get_parameter('compute_type').value,
                 language      = self.get_parameter('language').value,
                 download_root = self.get_parameter('download_root').value or None,
+                initial_prompt = self.get_parameter('initial_prompt').value,
             ),
             'whisper_cuda': dict(
-                model    = self.get_parameter('model').value,
-                language = self.get_parameter('language').value,
+                model          = self.get_parameter('model').value,
+                language       = self.get_parameter('language').value,
+                initial_prompt = self.get_parameter('initial_prompt').value,
             ),
         }.get(backend_name, {})
         self._backend = load_stt_backend(backend_name, **backend_kwargs)
