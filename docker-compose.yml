@@ -2,7 +2,7 @@ services:
 
   # ── Container 1: Isaac ROS ──────────────────────────────────────────────
   isaac_ros:
-    image: nvcr.io/nvidia/isaac/ros:isaac_ros_28556f8bc78a98822bd08b2d7c6fcf9b-arm64-jetpack
+    image: isaac_ros:langrobo-mdns
     container_name: isaac_ros
     runtime: nvidia
     network_mode: host
@@ -12,9 +12,13 @@ services:
     environment:
       - ROS_DOMAIN_ID=0
       - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-      - FASTRTPS_DEFAULT_PROFILES_FILE=/config/fastdds_unicast.xml
+      # Find the Pi5 "meeting point" BY NAME (mDNS) — no hardcoded IPs, any
+      # network. See ~/ros2_ws/NETWORKING.md on the Pi5.
+      - ROS_DISCOVERY_SERVER=rakhi24-desktop.local:11811
     volumes:
       - /dev:/dev
+      # host avahi socket so libnss-mdns in the container resolves *.local names
+      - /run/avahi-daemon/socket:/run/avahi-daemon/socket:ro
       - ${HOME}/workspaces/isaac_ros-dev:/workspaces/isaac_ros-dev
       - ${HOME}/robot/config:/config
       - ${HOME}/robot/data:/data
@@ -23,7 +27,7 @@ services:
 
   # ── Container 2: AI Stack ───────────────────────────────────────────────
   ai_stack:
-    image: ai_stack:dev-1.0.4
+    image: ai_stack:dev-1.0.5
     container_name: ai_stack
     runtime: nvidia
     network_mode: host
@@ -33,13 +37,17 @@ services:
     environment:
       - ROS_DOMAIN_ID=0
       - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-      - FASTRTPS_DEFAULT_PROFILES_FILE=/config/fastdds_unicast.xml
+      # Find the Pi5 "meeting point" BY NAME (mDNS) — no hardcoded IPs, any
+      # network. See ~/ros2_ws/NETWORKING.md on the Pi5.
+      - ROS_DISCOVERY_SERVER=rakhi24-desktop.local:11811
       # /opt/venv: jetson-containers packages (torch, whisper, kokoro …)
       # /usr/lib/python3/dist-packages: colcon_ros + catkin_pkg (needed for ros2 CLI)
       - PYTHONPATH=/opt/venv/lib/python3.12/site-packages:/usr/lib/python3/dist-packages
       # PipeWire socket — lets the container use BT audio via the host PipeWire session
       - PIPEWIRE_REMOTE=/run/user/2002/pipewire-0
     volumes:
+      # host avahi socket so libnss-mdns in the container resolves *.local names
+      - /run/avahi-daemon/socket:/run/avahi-daemon/socket:ro
       - ${HOME}/robot/ai_ws:/workspaces/ai_ws
       - ${HOME}/robot/config:/config
       - ${HOME}/robot/data:/data
