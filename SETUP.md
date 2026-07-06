@@ -184,6 +184,13 @@ sudo apt-get install -y ros-jazzy-isaac-ros-yolov8
 source /opt/ros/jazzy/setup.bash
 ros2 pkg list | grep isaac    # expect visual_slam, image_pipeline, nvblox, yolov8
 ros2 pkg list | grep nvblox   # expect nvblox_nav2 here (ships with nvblox, not separately)
+
+# 7g. Commit the container so installs survive recreation (run on HOST)
+#     isaac-ros activate always starts from the NGC base image — commit preserves the apt installs.
+exit   # leave the container first
+docker commit isaac_ros_dev_container isaac_ros:langrobo-nav-stack
+# Committed image: isaac_ros:langrobo-nav-stack
+# Packages baked in: visual_slam, image_pipeline, nvblox (+nvblox_nav2), nav2-bringup, yolov8
 ```
 
 ### Container 1 Modes Reference
