@@ -70,7 +70,30 @@ tail -f ~/robot/data/robot_launch.log
 
 ## Access
 
-The Pi5 (192.168.2.10) has passwordless SSH here (rakhi24@192.168.2.20) —
-agents on the Pi5 work on this repo remotely: edit via ssh/rsync, build and
-restart via docker exec, test over ROS2 topics (both machines share
-ROS_DOMAIN_ID=0 + fastdds unicast config).
+The Pi5 has passwordless SSH here (`ssh rakhi24@rakhi-jetson.local`; the
+192.168.2.x cable link was reported physically dead 2026-07-05) — agents on
+the Pi5 work on this repo remotely: edit via ssh/rsync, build and restart via
+docker exec, test over ROS2 topics. Cross-machine discovery is the Fast DDS
+Discovery Server on the Pi5 (`ROS_DISCOVERY_SERVER=rakhi24-desktop.local:11811`,
+see Pi5 `~/ros2_ws/NETWORKING.md`); the old fastdds unicast xml is retired.
+All machines use ROS_DOMAIN_ID=0.
+
+## Simulation laptop (rover_sim) — the stand-in robot body
+
+Until the real rover exists, a Gazebo sim on the laptop (`rakhi24`) provides
+the robot: mecanum X3 rover + lidar + RGBD camera in a furnished house world,
+Nav2 + slam_toolbox on top. Repo: https://github.com/Rakeshreddysr2401/rover_sim
+(laptop path `/workspace/ros2_ws/src/rover_sim`); its `docs/INTERFACE.md` is
+the authoritative topic contract.
+
+For THIS repo, what matters: the sim publishes RealSense-D555-style camera
+topics natively — `/cam_1/color/image_raw`, `/cam_1/color/camera_info`,
+`/cam_1/depth/image_rect_raw` (32FC1 m, 8 m range, frame
+`cam_1_depth_optical_frame`), `/cam_1/depth/camera_info`,
+`/cam_1/depth/color/points`, all 15 Hz sim-time — so nvblox / visual-SLAM /
+YOLO pipelines in the isaac_ros container can be developed against the sim
+without remapping. The sim laptop joins the same discovery server
+(`ROS_DISCOVERY_SERVER=rakhi24-desktop.local:11811` exported there before
+launch). Sim runs ≈0.1× real time in the house world — don't tune wall-clock
+timeouts against it. Keep machine/interface details in sync across the three
+CLAUDE.md files (Pi5 `~/ros2_ws`, this repo, rover_sim) — change all or none.
