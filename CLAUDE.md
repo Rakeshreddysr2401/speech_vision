@@ -21,6 +21,21 @@ Read VOICE_PIPELINE.md before touching voice_pkg.
 - `/model_store` (= `~/robot/models`) — whisper cache, YOLO weights,
   `wake/` (openWakeWord + silero onnx models)
 
+## Fleet roles — this Jetson has two, one per robot body
+
+`scripts/fleet_role.sh {voice|perception} {start|stop|status}` (called by the Pi5's
+`scripts/fleet.sh` over ssh, or run here directly):
+
+- **`voice`** = the **real-rover** role — starts the `ai_stack` container's STT/TTS/music/
+  camera/YOLO launch (`ros2 launch bringup_pkg robot.launch.py`). Handles the zombie-node
+  cleanup from gotcha 2 automatically.
+- **`perception`** = the **simulation** role — brings up the `isaac_ros` container so its
+  nvblox / visual-SLAM / nav pipelines can consume the sim's D555-style `/cam_1/*` topics.
+  (The pipeline launches inside that container are still manual for now.)
+
+The Pi5 picks the role: `fleet.sh sim` → `perception`, `fleet.sh rover` → `voice`. The real
+rover has no depth cam / lidar / imu yet, so `rover` mode does not start `isaac_ros`.
+
 ## Runtime — EVERYTHING runs in the `ai_stack` docker container
 
 - `~/robot/ai_ws` is bind-mounted at `/workspaces/ai_ws`: edit on host,
