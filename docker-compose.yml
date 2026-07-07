@@ -33,7 +33,7 @@ services:
 
   # ── Container 2: AI Stack ───────────────────────────────────────────────
   ai_stack:
-    image: ai_stack:dev-1.0.5
+    image: ai_stack:dev-1.0.6
     container_name: ai_stack
     runtime: nvidia
     network_mode: host

@@ -65,6 +65,17 @@
 #     Wake models in /model_store/wake (bind-mounted, not baked in):
 #       melspectrogram.onnx, embedding_model.onnx, hey_jarvis_v0.1.onnx, silero_vad.onnx
 #
+# THEN added on top (applied inside container, committed as dev-1.0.5):
+#   - STT anti-hallucination: vocabulary primer list + per-segment confidence
+#     filter (threshold 0.55) to suppress BT noise-floor "Thank you." ghosts
+#   - No new pip/apt packages; all changes are in bind-mounted ai_ws
+#
+# THEN added on top (applied inside container, committed as dev-1.0.6):
+#   - Fleet role split: scripts/fleet_role.sh {voice|perception} {start|stop|status}
+#     voice=real-rover (ai_stack STT/TTS/camera/YOLO), perception=sim (isaac_ros nvblox/SLAM)
+#   - Discovery Server networking (FastDDS unicast xml retired)
+#   - No new pip/apt packages; ai_ws bind-mounted, scripts on host
+#
 # KEY RUNTIME FACTS (dev-1.0.4):
 #   - STT: openai-whisper on CUDA (whisper_cuda backend), small model, ~1s/utterance
 #     ctranslate2 (faster-whisper) also available as CPU/int8 fallback
