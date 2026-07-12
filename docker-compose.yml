@@ -12,7 +12,10 @@ services:
     environment:
       - ROS_DOMAIN_ID=0
       - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-      - FASTRTPS_DEFAULT_PROFILES_FILE=/config/fastdds_unicast.xml
+      # DS mode: blank the image-baked FASTRTPS profile (it conflicts with DS client init).
+      # rakhi24-desktop.local → 192.168.2.10 (ethernet via JioAirFiber switch, /etc/hosts)
+      - FASTRTPS_DEFAULT_PROFILES_FILE=
+      - ROS_DISCOVERY_SERVER=rakhi24-desktop.local:11811
     volumes:
       - /dev:/dev
       - ${HOME}/workspaces/isaac_ros-dev:/workspaces/isaac_ros-dev
@@ -33,7 +36,10 @@ services:
     environment:
       - ROS_DOMAIN_ID=0
       - RMW_IMPLEMENTATION=rmw_fastrtps_cpp
-      - FASTRTPS_DEFAULT_PROFILES_FILE=/config/fastdds_unicast.xml
+      # DS mode: blank the image-baked FASTRTPS profile (it conflicts with DS client init).
+      # rakhi24-desktop.local → 192.168.2.10 (ethernet via JioAirFiber switch, /etc/hosts)
+      - FASTRTPS_DEFAULT_PROFILES_FILE=
+      - ROS_DISCOVERY_SERVER=rakhi24-desktop.local:11811
       # /opt/venv: jetson-containers packages (torch, whisper, kokoro …)
       # /usr/lib/python3/dist-packages: colcon_ros + catkin_pkg (needed for ros2 CLI)
       - PYTHONPATH=/opt/venv/lib/python3.12/site-packages:/usr/lib/python3/dist-packages

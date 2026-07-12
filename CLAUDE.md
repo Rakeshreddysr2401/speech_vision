@@ -7,6 +7,9 @@ contract is documented in VOICE_PIPELINE.md here and mirrored in the Pi5
 repo's ARCHITECTURE.md — never change it in one repo only.
 
 Read VOICE_PIPELINE.md before touching voice_pkg.
+Read NETWORKING.md before touching any DDS/network config (docker-compose env,
+`/etc/hosts`, discovery server). Read DEPTH_CAMERA.md for the RealSense D555 +
+Isaac ROS perception (cuVSLAM/nvblox/Nav2) plan.
 
 ## Layout
 
@@ -52,6 +55,14 @@ Read VOICE_PIPELINE.md before touching voice_pkg.
    itself again.
 6. **Host PipeWire restart drops the BT speaker** — reconnect with
    `bluetoothctl connect D6:AA:BB:59:EF:B6`.
+7. **DDS uses a Discovery Server now, not the XML profiles.** Containers set
+   `ROS_DISCOVERY_SERVER=rakhi24-desktop.local:11811` and must BLANK
+   `FASTRTPS_DEFAULT_PROFILES_FILE` (the image bakes it; leaving it set breaks
+   DS discovery). Recreate a container (`docker compose up -d <svc>`) after env
+   edits — a merely-running container keeps stale env. See NETWORKING.md.
+8. **The JioAirFiber router (used as a switch) drops jumbo frames**, so it
+   cannot carry the RealSense D555 depth stream (needs MTU 9000). A
+   jumbo-capable gigabit switch is required — see DEPTH_CAMERA.md / NETWORKING.md.
 
 ## Commands
 
