@@ -2,7 +2,7 @@ services:
 
   # ── Container 1: Isaac ROS ──────────────────────────────────────────────
   isaac_ros:
-    image: nvcr.io/nvidia/isaac/ros:isaac_ros_28556f8bc78a98822bd08b2d7c6fcf9b-arm64-jetpack
+    image: isaac_ros:langrobo-nav-stack-1.2
     container_name: isaac_ros
     runtime: nvidia
     network_mode: host

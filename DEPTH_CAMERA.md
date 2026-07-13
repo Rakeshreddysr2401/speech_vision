@@ -90,10 +90,28 @@ STT/TTS onto the Pi5. With voice off the Jetson, the 8GB is free for perception.
    `isaac_ros_realsense` launch fragment) — decide direct-DDS vs wrapper here.
 6. **Then** stand up cuVSLAM → nvblox → Nav2 (separate phases).
 
-## What's DONE vs PENDING
+## What's DONE vs PENDING (updated 2026-07-13)
 
 - ✅ Network: `isaac_ros` container on the ethernet DDS graph (verified).
-- ✅ RealSense SDK + wrapper installed in `isaac_ros` (apt); image committed.
-- ⏳ Hardware: jumbo switch (order) + D555 (arriving).
-- ⏳ Build cuVSLAM + nvblox (nvblox from source), then Nav2 integration.
-- ⏳ Move voice off Jetson (Telegram / STT-TTS→Pi5).
+- ✅ RealSense SDK 2.58.1 + wrapper 4.58.1 + isaac-ros-realsense installed;
+  `rs-eth-config`/`rs-enumerate-devices` present. Image committed as
+  `isaac_ros:langrobo-nav-stack-1.2` and compose points at it. (The earlier
+  claim that this was already installed was wrong — the running container was
+  a bare bootstrap because compose pointed at the base image; fixed.)
+- ✅ nvblox + Nav2: prebuilt Jazzy debs work (NO source build needed — this
+  section's earlier note is outdated). Full real profile in
+  `langrobo_perception` (`mode:=real`) smoke-tested camera-less: zero dead
+  nodes.
+- ❌ **cuVSLAM does NOT run on this Orin Nano**: the noble-jetpack (JP7) debs
+  ship `libcuvslam.so` built for Thor-class ARMv9 — SIGILL in the static
+  initialiser on Cortex-A78AE (gdb-verified on releases 4.3 and 4.4,
+  2026-07-13). **Localization is RTAB-Map instead** (rgbd_odometry +
+  rtabmap_slam debs installed; CPU; persistent map at /data/rtabmap.db —
+  saved locations survive reboots). Do not retry cuVSLAM until NVIDIA ships
+  an Orin build.
+- ✅ Voice off Jetson in rover mode: `fleet_role.sh` (new, ~/robot/scripts/)
+  starts ONLY the perception role; Pi5 fleet.sh rover matches. Telegram is
+  the interface; detections_3d serves the brain's look() camera feed.
+- ⏳ Hardware: jumbo switch (order) + D555 (arriving) + servo wiring
+  (ESP32 GPIO 18/19) + camera-mount measurement.
+- Bring-up runbook + acceptance tests: Pi5 repo `JETSON_D555_SETUP.md`.
