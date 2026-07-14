@@ -2,7 +2,7 @@ services:
 
   # ── Container 1: Isaac ROS ──────────────────────────────────────────────
   isaac_ros:
-    image: isaac_ros:langrobo-nav-stack-1.2
+    image: isaac_ros:langrobo-nav-stack-1.3-dds   # librealsense built w/ DDS (D555 support) — 2026-07-14
     container_name: isaac_ros
     runtime: nvidia
     network_mode: host
