@@ -63,6 +63,37 @@ Isaac ROS perception (cuVSLAM/nvblox/Nav2) plan.
 8. **The JioAirFiber router (used as a switch) drops jumbo frames**, so it
    cannot carry the RealSense D555 depth stream (needs MTU 9000). A
    jumbo-capable gigabit switch is required — see DEPTH_CAMERA.md / NETWORKING.md.
+9. **D555 ROS integration: set LD_LIBRARY_PATH AFTER setup.bash.** The apt
+   librealsense (2.58.1, no DDS) in `/opt/ros/jazzy/lib/aarch64-linux-gnu/` gets
+   prepended by `setup.bash`. Set `LD_LIBRARY_PATH=/root/librealsense/install/lib:$LD_LIBRARY_PATH`
+   AFTER sourcing `setup.bash` so the DDS build wins. `run_perception_real.sh` does this.
+10. **realsense-ros ≥4.58.2 changed the default camera_namespace to `camera`.**
+    Topics publish at `/camera/camera0/…` (not `/camera0/…` as in 4.58.1). All
+    downstream remappings (rgbd_odometry, rtabmap, nvblox) must use `/camera/camera0/…`.
+    `realsense2_camera` was rebuilt from source (v4.58.2) in the workspace against
+    `/root/librealsense/install/lib`; apt package is overridden by `install/setup.bash`.
+11. **~/.realsense-config.json must use `context.dds` wrapper, not top-level `dds`.**
+    `{"context":{"dds":{"enabled":true,"domain":0}}}` works; top-level `dds` key is
+    ignored by the RS2 context constructor. `run_perception_real.sh` writes this on start.
+12. **D555 launch args for `depth_module.*` are silently DROPPED** (params only
+    exist after device connect). Emitter-off and global-time-off are enforced at
+    runtime by the perception scripts on every start — never assume a launch arg
+    took effect; `ros2 param get` it. Same family: `align_depth.enable` /
+    `pointcloud.enable` accept values but publish nothing on the DDS driver.
+13. **Localization backend is a one-word switch** —
+    `~/workspaces/isaac_ros-dev/src/langrobo_perception/config/localization`:
+    `rtabmap` (production, verified under motion 2026-07-16) or `cuvslam`
+    (PARKED: the Humble sidecar starves it of frames/TF across the
+    Jazzy↔Humble DDS boundary — /tf_static never deserializes across distros).
+14. **Motor dead zone**: below ~60% PWM (cmd <≈0.18 m/s) wheels hum but don't
+    turn. Nav2 output flows collision-monitor → `/cmd_vel_nav` →
+    `cmd_vel_deadband.py` → `/cmd_vel`. Delete the shim only after the ESP32
+    firmware reflash carries the same remap.
+15. **Nav goals must carry a ZERO timestamp** — Nav2 re-transforms the original
+    stamp on every replan; `now()` stamps age out of the 10s TF cache mid-drive
+    and abort the goal ("extrapolation into the past").
+16. **Moved the rover by hand → `robot restart`** (fresh SLAM origin). Kidnaps
+    corrupt any tracker's map.
 
 ## Commands
 
