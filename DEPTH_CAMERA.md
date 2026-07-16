@@ -106,33 +106,42 @@ STT/TTS onto the Pi5. With voice off the Jetson, the 8GB is free for perception.
    `isaac_ros_realsense` launch fragment) — decide direct-DDS vs wrapper here.
 6. **Then** stand up cuVSLAM → nvblox → Nav2 (separate phases).
 
-## What's DONE vs PENDING (updated 2026-07-13)
+## What's DONE vs PENDING (updated 2026-07-16)
 
-- ✅ Network: `isaac_ros` container on the ethernet DDS graph (verified).
-- ⚠️ RealSense SDK: the apt/ROS `librealsense2` 2.58.1 + wrapper 4.58.1 +
-  isaac-ros-realsense are installed BUT the apt lib is **built without DDS** →
-  cannot see the D555. Superseded by the from-source DDS build (see "Bring-up
-  result"). Old note (still true for the ROS wrapper itself): image was committed
-  as `isaac_ros:langrobo-nav-stack-1.2`; **now `-1.3-dds`** carries the DDS build.
-- ✅ nvblox + Nav2: prebuilt Jazzy debs work (NO source build needed — this
-  section's earlier note is outdated). Full real profile in
-  `langrobo_perception` (`mode:=real`) smoke-tested camera-less: zero dead
-  nodes.
+- ✅ **FIRST FULLY AUTONOMOUS MISSION 2026-07-16**: pixel-grounded goal → Nav2
+  → drive → "arrived". Localization = **RTAB-Map** (cuVSLAM parked — motion
+  explosions from cross-distro sidecar starvation). Full post-mortem:
+  `langrobo_perception/ISSUES_AND_SOLUTIONS.md` Part 9; gotchas 12-16 in
+  `CLAUDE.md` here.
+
+- ✅ Network: `192.168.11.70/24` + MTU 9000 on `enP8p1s0` **now persistent** via
+  NetworkManager (`nmcli` — survives reboot). D555 reachable at 192.168.11.55.
+- ✅ **ROS integration COMPLETE (2026-07-15)**: `realsense2_camera` rebuilt from
+  source (v4.58.2) in the workspace against the DDS librealsense install tree
+  (`/root/librealsense/install/lib`). `run_perception_real.sh` prepends that path
+  to `LD_LIBRARY_PATH` AFTER `setup.bash` to beat the apt lib. Config:
+  `~/.realsense-config.json` written by the script on each launch.
+  Topics at `/camera/camera0/…` (realsense-ros 4.58.2 defaults namespace to
+  `camera`; all downstream remappings updated).
+- ✅ nvblox + Nav2: prebuilt Jazzy debs work (NO source build needed). Nav2 ready.
 - ❌ **cuVSLAM does NOT run on this Orin Nano**: the noble-jetpack (JP7) debs
   ship `libcuvslam.so` built for Thor-class ARMv9 — SIGILL in the static
-  initialiser on Cortex-A78AE (gdb-verified on releases 4.3 and 4.4,
-  2026-07-13). **Localization is RTAB-Map instead** (rgbd_odometry +
-  rtabmap_slam debs installed; CPU; persistent map at /data/rtabmap.db —
-  saved locations survive reboots). Do not retry cuVSLAM until NVIDIA ships
-  an Orin build.
-- ✅ Voice off Jetson in rover mode: `fleet_role.sh` (new, ~/robot/scripts/)
-  starts ONLY the perception role; Pi5 fleet.sh rover matches. Telegram is
-  the interface; detections_3d serves the brain's look() camera feed.
-- ✅ **D555 bring-up COMPLETE (2026-07-14)** — see "Bring-up result" below.
-- ⏳ Hardware: jumbo switch (turned out **not required** for one camera — direct
-  connect works) + servo wiring (ESP32 GPIO 18/19) + camera-mount measurement.
-- ⏳ ROS integration PENDING: `realsense2_camera` still links the DDS-less ROS lib;
-  must rebuild/point it at the DDS build before cuVSLAM/RTAB-Map/nvblox/Nav2 use it.
+  initialiser on Cortex-A78AE (gdb-confirmed on releases 4.3 and 4.4,
+  2026-07-13; re-confirmed fresh apt install 2026-07-15: md5 `a5b6f71...` Apr 28
+  build = Thor binary). **Do not retry until NVIDIA ships an Orin build.**
+  Localization is RTAB-Map instead.
+- ✅ **PERCEPTION STACK LIVE (2026-07-15)**: full real pipeline smoke-tested:
+  D555 → `realsense2_camera_node` (DDS) → RTAB-Map `rgbd_odometry` → `/odom`
+  (quality 460-512 features, ~12 Hz, 80ms update) → `rtabmap` SLAM (building
+  map) → nvblox (running, needs robot TF for pointcloud). Camera delivers
+  color@18 Hz + depth@13 Hz over DDS. Nav2 brought up separately (needs Pi5
+  discovery server for full routing).
+- ✅ Voice off Jetson in rover mode.
+- ✅ D555 bring-up COMPLETE (2026-07-14) — see "Bring-up result" below.
+- ⏳ Hardware: servo wiring (ESP32 GPIO 18/19) + camera-mount measurement.
+- ⏳ Timestamp sync: D555 delivers color/depth ~33ms apart via DDS (network
+  jitter, not configurable); RTAB-Map `approx_sync` handles it, quality unaffected.
+- ⏳ Nav2 full test: needs Pi5 discovery server running (test with robot connected).
 - Bring-up runbook + acceptance tests: Pi5 repo `JETSON_D555_SETUP.md`.
 
 ## Bring-up result (2026-07-14) — the working recipe
